@@ -1,0 +1,16 @@
+{
+    "css.lint.unknownAtRules": "ignore",
+    "sqltools.connections": [
+        {
+            "ssh": "Disabled",
+            "previewLimit": 50,
+            "server": "localhost",
+            "port": 5432,
+            "driver": "PostgreSQL",
+            "database": "aicallingdb",
+            "username": "postgres",
+            "password": "jayaveer",
+            "name": "postgresql"
+        }
+    ]
+}
