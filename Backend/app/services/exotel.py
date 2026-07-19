@@ -35,12 +35,21 @@ class ExotelService:
             # In Phase 5, this will be replaced with our AI Stream Endpoint
             data["Url"] = "http://my.exotel.com/{}/dummy_flow".format(self.sid)
 
+            print("--- EXOTEL DEBUGGING TRACE ---")
+            print(f"URL: {self.base_url}")
+            print(f"PAYLOAD: {data}")
+            
             response = requests.post(
                 self.base_url,
                 auth=HTTPBasicAuth(self.api_key, self.token),
                 data=data,
                 timeout=10
             )
+            
+            # 1. Print Complete Exotel API Response
+            print(f"EXOTEL RESPONSE CODE: {response.status_code}")
+            print(f"EXOTEL RAW RESPONSE TEXT: {response.text}")
+            print("------------------------------")
 
             response.raise_for_status()
             res_json = response.json()
