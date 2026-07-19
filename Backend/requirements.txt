@@ -11,3 +11,4 @@ openpyxl==3.1.5
 sarvamai
 websockets
 webrtcvad
+requests
