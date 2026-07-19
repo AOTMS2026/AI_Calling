@@ -15,6 +15,14 @@ class Settings(BaseSettings):
     
     # External APIs
     N8N_WEBHOOK_URL: str = "https://aotms.app.n8n.cloud/webhook/Email"
+    SARVAM_API: Optional[str] = None
+    
+    # Exotel Integration
+    EXOTEL_SID: str = ""
+    EXOTEL_API_KEY: str = ""
+    EXOTEL_TOKEN: str = ""
+    EXOTEL_CALLER_ID: str = ""
+    EXOTEL_WEBHOOK_URL: str = ""
 
     @property
     def sync_database_url(self) -> str:

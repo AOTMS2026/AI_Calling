@@ -43,8 +43,9 @@ class Campaign(SQLModel, table=True):
 
 class Call(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    vendor_call_sid: Optional[str] = Field(default=None, index=True)
     contact_phone: str = Field(foreign_key="contact.phone")
-    campaign_id: int = Field(foreign_key="campaign.id")
+    campaign_id: Optional[int] = Field(default=None, foreign_key="campaign.id")
     duration: Optional[int] = None
     transcript: Optional[str] = None
-    result_status: str = Field(default="Pending") # Pending, Answered, Rejected, No Answer
+    result_status: str = Field(default="Pending") # Pending, Calling, Answered, Busy, No Answer, Failed, Completed

@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database.connection import init_db
-from app.api import auth, contacts, campaigns, calls
+from app.api import auth, contacts, campaigns, calls, prompts, stream
 
 app = FastAPI(
     title="AI Calling SaaS API",
@@ -22,6 +22,8 @@ app.include_router(auth.router)
 app.include_router(contacts.router)
 app.include_router(campaigns.router)
 app.include_router(calls.router)
+app.include_router(prompts.router)
+app.include_router(stream.router)
 
 @app.on_event("startup")
 def on_startup():

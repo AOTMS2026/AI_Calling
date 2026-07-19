@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Backgro
 from sqlmodel import Session, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.database.connection import get_session, engine
-from app.models.domain import Contact
+from app.models.domain import Contact, Call
+from app.services.exotel import exotel_client
 import io
 import csv
 import os
@@ -175,3 +176,33 @@ def get_contacts(db: Session = Depends(get_session), limit: int = 500):
     # Fixed AttributeError: Since we removed 'id', we will map deterministic safety limits using the new 'phone' primary key
     contacts = db.exec(select(Contact).order_by(Contact.phone.asc()).limit(limit)).all()
     return contacts
+
+@router.post("/dial-single/{phone}")
+def manual_dial_contact(phone: str, db: Session = Depends(get_session)):
+    """Triggers an instantaneous manual call out of the UI bypassing bulk campaigns"""
+    new_call = Call(contact_phone=phone, result_status="Calling")
+    db.add(new_call)
+    db.commit()
+    db.refresh(new_call)
+    
+    result = exotel_client.trigger_outbound_call(phone, campaign_id=None)
+    
+    if result.get("success"):
+        new_call.vendor_call_sid = result.get("vendor_call_sid")
+        new_call.result_status = "Pending"
+    else:
+        new_call.result_status = "Failed"
+        db.commit()
+        raise HTTPException(status_code=500, detail=result.get("error"))
+        
+    db.commit()
+    return {"message": "Call Dispatched Successfully", "vendor_sid": new_call.vendor_call_sid}
+
+@router.post("/single")
+def create_single_contact(contact: Contact, db: Session = Depends(get_session)):
+    """Receives JSON from the UI Modal to manually inject a single user"""
+    # Safe insert skipping crashes if phone number already exists
+    stmt = pg_insert(Contact).values([contact.model_dump()]).on_conflict_do_nothing()
+    db.execute(stmt)
+    db.commit()
+    return {"message": "Contact securely added to PostgreSQL."}
