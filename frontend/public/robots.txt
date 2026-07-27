@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://academyoftechmasters.com/sitemap.xml
+Sitemap: https://aotms.com/sitemap.xml
