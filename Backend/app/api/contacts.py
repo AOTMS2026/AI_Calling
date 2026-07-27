@@ -3,7 +3,6 @@ from sqlmodel import Session, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.database.connection import get_session, engine
 from app.models.domain import Contact, Call
-from app.services.exotel import exotel_client
 import io
 import csv
 import os
@@ -18,7 +17,6 @@ UPLOAD_JOBS = {}
 
 def process_bulk_excel(file_path: str, job_id: str):
     try:
-        # read_only=True ensures minimal memory usage for millions of rows
         wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
         sheet = wb.active
         
@@ -26,11 +24,9 @@ def process_bulk_excel(file_path: str, job_id: str):
         batch = []
         
         with Session(engine) as session:
-            # We map indexes dynamically based on the exact user header fields:
             header_map = {}
             for i, row in enumerate(sheet.iter_rows(values_only=True)):
                 if not header_map:
-                    # Parse headers dynamically (scan downward until we find the real headers)
                     row_str = str(row).lower()
                     if 'email' in row_str and 'first name' in row_str and 'phone' in row_str:
                         for idx, cell in enumerate(row):
@@ -63,7 +59,6 @@ def process_bulk_excel(file_path: str, job_id: str):
                 district = get_val('district')
                 phone = get_val('phone') or ''
                 
-                # Skip completely empty rows
                 if not phone and not email:
                     continue
 
@@ -76,7 +71,7 @@ def process_bulk_excel(file_path: str, job_id: str):
                     "qualification": qualification,
                     "institute_name": institute_name,
                     "district": district,
-                    "phone": phone if phone else f"NO-PHONE-{i}" # Ensure unique PK even if empty
+                    "phone": phone if phone else f"NO-PHONE-{i}"
                 })
                 
                 if len(batch) >= batch_size:
@@ -85,12 +80,10 @@ def process_bulk_excel(file_path: str, job_id: str):
                     session.commit()
                     batch = []
                     
-                # Calculate deterministic progress approx (openpyxl max_row is an estimate or exact)
                 total_approx = sheet.max_row or 1000
                 progress_pct = min(99, int((i / total_approx) * 100))
                 UPLOAD_JOBS[job_id]["progress"] = progress_pct
                     
-            # Insert any remaining records
             if batch:
                 stmt = pg_insert(Contact).values(batch).on_conflict_do_nothing()
                 session.execute(stmt)
@@ -108,13 +101,11 @@ def process_bulk_excel(file_path: str, job_id: str):
         if 'wb' in locals():
             wb.close()
             
-        # Cleanup temporary file
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
             except Exception as cleanup_error:
                 print(f"Warning: Could not remove temporary file {file_path}: {cleanup_error}")
-
 
 @router.get("/upload-progress/{job_id}")
 async def get_upload_progress(job_id: str):
@@ -173,30 +164,18 @@ async def upload_contacts(file: UploadFile = File(...), db: Session = Depends(ge
 
 @router.get("/")
 def get_contacts(db: Session = Depends(get_session), limit: int = 500):
-    # Fixed AttributeError: Since we removed 'id', we will map deterministic safety limits using the new 'phone' primary key
     contacts = db.exec(select(Contact).order_by(Contact.phone.asc()).limit(limit)).all()
     return contacts
 
 @router.post("/dial-single/{phone}")
 def manual_dial_contact(phone: str, db: Session = Depends(get_session)):
-    """Triggers an instantaneous manual call out of the UI bypassing bulk campaigns"""
-    new_call = Call(contact_phone=phone, result_status="Calling")
+    """Triggers an instantaneous manual call out of the UI bypassing bulk campaigns. Stripped for clean architecture."""
+    new_call = Call(contact_phone=phone, result_status="Failed - APIs Removed")
     db.add(new_call)
     db.commit()
     db.refresh(new_call)
     
-    result = exotel_client.trigger_outbound_call(phone, campaign_id=None)
-    
-    if result.get("success"):
-        new_call.vendor_call_sid = result.get("vendor_call_sid")
-        new_call.result_status = "Pending"
-    else:
-        new_call.result_status = "Failed"
-        db.commit()
-        raise HTTPException(status_code=500, detail=result.get("error"))
-        
-    db.commit()
-    return {"message": "Call Dispatched Successfully", "vendor_sid": new_call.vendor_call_sid}
+    return {"message": "Call Dispatched architecture successfully removed.", "vendor_sid": new_call.vendor_call_sid}
 
 @router.post("/single")
 def create_single_contact(contact: Contact, db: Session = Depends(get_session)):

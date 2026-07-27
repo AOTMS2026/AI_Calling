@@ -15,7 +15,11 @@ class Settings(BaseSettings):
     
     # External APIs
     N8N_WEBHOOK_URL: str = "https://aotms.app.n8n.cloud/webhook/Email"
+    N8N_RESET_PASSWORD_URL: str = "https://aotms.app.n8n.cloud/webhook/AI%20CALLING"
     SARVAM_API: Optional[str] = None
+    RAVAN_AGNI_AI: str = ""
+    RAVAN_ORG_ID: Optional[str] = None
+    AGENT_ID: Optional[str] = None
     
     # Exotel Integration
     EXOTEL_SID: str = ""

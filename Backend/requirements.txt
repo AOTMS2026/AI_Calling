@@ -8,7 +8,4 @@ python-jose[cryptography]==3.3.0
 python-multipart==0.0.6
 httpx
 openpyxl==3.1.5
-sarvamai
-websockets
-webrtcvad
 requests

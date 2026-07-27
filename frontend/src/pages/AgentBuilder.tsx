@@ -1,0 +1,603 @@
+import { useState, useEffect, useRef } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import toast from 'react-hot-toast';
+import { MainLayout } from '../components/layout/MainLayout';
+import { AIAgentToolsSidebar } from '../components/AIAgentTools/AIAgentToolsSidebar';
+import { apiClient } from '../api/client';
+import { Loader2, ArrowLeft, Save, Bot, Cpu, Mic, Settings, Play, X, Search, AudioLines, Square, Info, PhoneCall, ChevronDown } from 'lucide-react';
+
+export function AgentBuilder() {
+    const { id } = useParams();
+    const navigate = useNavigate();
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+
+    // Core Agent State
+    const [agentData, setAgentData] = useState<any>(null);
+    const [prompt, setPrompt] = useState("");
+    const [agentName, setAgentName] = useState("");
+    const [voiceId, setVoiceId] = useState("");
+    const [modelId, setModelId] = useState("");
+
+    // Ravan Voices Architecture
+    const [llmModels, setLlmModels] = useState<any[]>([]);
+    const [voiceModalOpen, setVoiceModalOpen] = useState(false);
+    const [voiceSearchQuery, setVoiceSearchQuery] = useState("");
+    const [voiceGenderFilter, setVoiceGenderFilter] = useState("All");
+
+    // Functions/Modal State
+    const [showTransferModal, setShowTransferModal] = useState(false);
+    const [transferToolData, setTransferToolData] = useState<any>(null);
+    const [loadingTransferTool, setLoadingTransferTool] = useState(false);
+
+    // Audio Playback State Management
+    const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
+    const audioRef = useRef<HTMLAudioElement | null>(null);
+
+    // Clean up audio instantly if component unmounts or modal closes
+    useEffect(() => {
+        if (!voiceModalOpen && audioRef.current) {
+            audioRef.current.pause();
+            setPlayingVoiceId(null);
+        }
+    }, [voiceModalOpen]);
+
+    useEffect(() => {
+        const fetchAgentDetails = async () => {
+            try {
+                setLoading(true);
+
+                if (id === "new") {
+                    // It's a completely new Agent shell. Only fetch the models structure!
+                    const modelsRes = await apiClient.get('/agents/voices');
+                    setLlmModels(modelsRes.data?.data || []);
+                    setAgentData({});
+                    setPrompt("");
+                    setAgentName("Unnamed Agent");
+
+                    // We can default select Iris and Agni Premium globally to match Ravan portal
+                    const models = modelsRes.data?.data || [];
+                    const premium = models.find((m: any) => m.llmModel === "Agni Premium");
+                    if (premium) {
+                        setModelId(premium.id);
+                        const iris = premium.voices?.find((v: any) => v.voiceName?.toLowerCase() === "iris");
+                        if (iris) setVoiceId(iris.id);
+                    }
+                } else {
+                    // Parallel fetch Agent Details & Available LLM Models from our Proxy Route
+                    const [agentRes, modelsRes] = await Promise.all([
+                        apiClient.get(`/agents/${id}`),
+                        apiClient.get('/agents/voices')
+                    ]);
+
+                    const data = agentRes.data?.data || agentRes.data;
+                    setAgentData(data);
+                    setPrompt(data.prompt || "");
+                    setAgentName(data.agentName || "Unnamed Agent");
+
+                    const serverModels = modelsRes.data?.data || [];
+                    setLlmModels(serverModels);
+
+                    // Re-Hydrate Ravan Strings ("Agni Premium", "Iris") back to UUIDs for Native HTML form element bindings!
+                    let reHydratedModelId = "";
+                    const incomingModelStr = data.model || data.s2sModel || data.llmModelId || "";
+                    const matchedModel = serverModels.find((m: any) => m.llmModel === incomingModelStr || m.id === incomingModelStr);
+                    if (matchedModel) reHydratedModelId = matchedModel.id;
+                    setModelId(reHydratedModelId || (serverModels[0]?.id || ""));
+
+                    let reHydratedVoiceId = "";
+                    const incomingVoiceStr = data.voiceId || "";
+                    serverModels.forEach((m: any) => {
+                        const matchedVoice = m.voices?.find((v: any) => v.voiceName === incomingVoiceStr || v.id === incomingVoiceStr);
+                        if (matchedVoice) reHydratedVoiceId = matchedVoice.id;
+                    });
+                    setVoiceId(reHydratedVoiceId);
+                }
+
+            } catch (error) {
+                console.error("Failed to fetch agent deeply.", error);
+            } finally {
+                setLoading(false);
+            }
+        };
+        fetchAgentDetails();
+    }, [id]);
+
+    const handleSave = async () => {
+        try {
+            setSaving(true);
+
+            // Constructing string-literal based properties because Ravan explicitly demands text references!
+            const structModelName = llmModels.find(m => m.id === modelId)?.llmModel || "Agni Premium";
+            let structVoiceName = "Iris";
+            for (const m of llmModels) {
+                const voiceMatch = m.voices?.find((v: any) => v.id === voiceId);
+                if (voiceMatch) {
+                    structVoiceName = voiceMatch.voiceName;
+                    break;
+                }
+            }
+
+            if (id === "new") {
+                // Provision a net-new node onto Ravan grid dynamically
+                const response = await apiClient.post('/agents/', {
+                    agentName: agentName,
+                    prompt: prompt,
+                    voiceId: structVoiceName,
+                    model: structModelName,
+                    s2sModel: structModelName
+                });
+
+                toast.success("Agent configuration fully deployed to Ravan.ai");
+                const newId = response.data?.data?.id;
+                if (newId) {
+                    navigate(`/agents/${newId}`, { replace: true });
+                }
+            } else {
+                // Existing entity, issue a patch instead. Ravan demands exact string literal mapping.
+                await apiClient.patch(`/agents/${id}`, {
+                    agentName: agentName,
+                    prompt: prompt,
+                    voiceId: structVoiceName,
+                    model: structModelName,
+                    s2sModel: structModelName,
+                    status: 'ACTIVE'
+                });
+                toast.success("Configuration successfully synced to Ravan.ai!");
+            }
+        } catch (error: any) {
+            console.error("Error saving agent.", error);
+            toast.error(error.response?.data?.detail || "Failed to sync configuration.");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    // Flatten all voices for the modal grid, inject the llmModel name for reference
+    const allVoices = llmModels.flatMap(m => m.voices?.map((v: any) => ({ ...v, modelName: m.llmModel })) || []);
+
+    const filteredVoices = allVoices.filter(v => {
+        const matchesSearch = v.voiceName?.toLowerCase().includes(voiceSearchQuery.toLowerCase());
+        const matchesGender = voiceGenderFilter === "All" || v.gender?.toLowerCase() === voiceGenderFilter.toLowerCase();
+        return matchesSearch && matchesGender;
+    });
+
+    const activeVoice = allVoices.find(v => v.id === voiceId) || null;
+    const activeModel = llmModels.find(m => m.id === modelId) || null;
+
+    const playPreview = (e: React.MouseEvent, voiceId: string, recordingUrl: string) => {
+        e.stopPropagation();
+
+        // If they click the same voice that is actively playing, safely Halt the playback
+        if (playingVoiceId === voiceId && audioRef.current) {
+            audioRef.current.pause();
+            setPlayingVoiceId(null);
+            return;
+        }
+
+        // Hard reset any existing audio streams
+        if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.currentTime = 0;
+        }
+
+        if (recordingUrl) {
+            const audio = new Audio(recordingUrl);
+            audioRef.current = audio;
+            setPlayingVoiceId(voiceId);
+
+            audio.onended = () => {
+                setPlayingVoiceId(null);
+            };
+
+            audio.play().catch(e => {
+                console.error("Audio block failed mapping", e);
+                setPlayingVoiceId(null);
+            });
+        } else {
+            toast.error("Digital Master preview not available for this legacy construct.");
+        }
+    }
+
+    const handleOpenTransferModal = async () => {
+        setShowTransferModal(true);
+        setLoadingTransferTool(true);
+        try {
+            // Using the specific ID the user wants to test with
+            const toolId = "019f8de0-7878-7be0-b159-ec80e7559a6b";
+            const response = await apiClient.get(`/api/ravan/tools/${toolId}`);
+            setTransferToolData(response.data);
+        } catch (error) {
+            console.error("Failed to fetch Transfer tool:", error);
+            toast.error("Failed to load Transfer Call details from Ravan.ai.");
+        } finally {
+            setLoadingTransferTool(false);
+        }
+    };
+
+    return (
+        <MainLayout>
+            <div className="w-full bg-slate-50/50 rounded-2xl p-6 md:p-8 min-h-[85vh] flex flex-col relative">
+
+                {/* Header Action Row */}
+                <div className="flex items-center justify-between mb-8 pb-6 border-b border-gray-200">
+                    <div className="flex items-center gap-4">
+                        <button
+                            onClick={() => navigate('/agents')}
+                            className="w-10 h-10 bg-white border border-gray-200 rounded-xl flex items-center justify-center hover:bg-gray-50 transition-colors shadow-sm shrink-0"
+                        >
+                            <ArrowLeft className="w-5 h-5 text-gray-600" />
+                        </button>
+                        <div>
+                            <div className="flex items-center gap-3">
+                                <h1 className="text-2xl font-black text-gray-900 tracking-tight flex items-center gap-2">
+                                    {agentName}
+                                </h1>
+                                <button className="text-gray-400 hover:text-gray-600"><Settings size={16} /></button>
+                            </div>
+                            <span className="text-xs font-mono text-gray-400 mt-1 block">ID: {id}</span>
+                        </div>
+                    </div>
+
+                    <button
+                        onClick={handleSave}
+                        disabled={loading || saving}
+                        className="flex items-center gap-2 px-6 py-2.5 bg-gray-900 hover:bg-black text-white rounded-[10px] shadow-sm transition-colors text-sm font-bold tracking-wide shrink-0"
+                    >
+                        {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                        Save Configuration
+                    </button>
+                </div>
+
+                {loading ? (
+                    <div className="flex flex-col items-center justify-center py-32 flex-1">
+                        <div className="relative">
+                            <div className="w-16 h-16 bg-white rounded-[18px] border border-gray-100 flex items-center justify-center shadow-lg relative z-10 overflow-hidden">
+                                <img src="/atm-logo.jpeg" alt="Loading" className="w-full h-full object-cover animate-pulse" />
+                            </div>
+                            <div className="absolute inset-0 bg-blue-400 rounded-[18px] animate-ping opacity-20"></div>
+                        </div>
+                        <h3 className="text-lg font-bold text-gray-900 mt-6 tracking-tight">Syncing Node Architecture...</h3>
+                        <p className="text-gray-500 text-sm mt-2">Pulling nested Ravan.ai configuration data</p>
+                    </div>
+                ) : (
+                    <div className="flex flex-col gap-6">
+
+                        {/* Custom Configurations Navbar Navbar */}
+                        <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm px-6 py-4 flex flex-col md:flex-row items-center gap-6">
+
+                            <div className="flex items-center gap-4 w-full md:w-auto">
+                                <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2 shrink-0">
+                                    <Cpu size={14} /> Cognitive Model
+                                </label>
+                                <select
+                                    value={modelId}
+                                    onChange={(e) => setModelId(e.target.value)}
+                                    className="w-full md:w-64 px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                                >
+                                    <option value="" disabled>Select LLM Model Engine</option>
+                                    {llmModels.map(m => (
+                                        <option key={m.id} value={m.id}>{m.llmModel} {m.llmModel === 'Agni Premium' ? '(Recommended)' : ''}</option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className="hidden md:block w-px h-8 bg-gray-200"></div>
+
+                            <div className="flex items-center gap-4 w-full md:w-auto flex-1">
+                                <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2 shrink-0">
+                                    <Mic size={14} /> Neural Voice
+                                </label>
+                                <button
+                                    onClick={() => setVoiceModalOpen(true)}
+                                    className="flex-1 md:max-w-sm px-4 py-2 bg-gray-50 border border-gray-200 hover:border-blue-300 rounded-xl flex items-center justify-between transition-colors shadow-sm group"
+                                >
+                                    <div className="flex items-center gap-3">
+                                        {activeVoice?.imgUrl ? (
+                                            <div className="w-7 h-7 rounded-full border border-gray-300 overflow-hidden relative shadow-sm">
+                                                <img src={activeVoice.imgUrl} className="w-full h-full object-cover" alt={activeVoice.voiceName} />
+                                                <div className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border border-white ${activeVoice.gender?.toLowerCase() === 'female' ? 'bg-pink-500' : 'bg-blue-500'}`}></div>
+                                            </div>
+                                        ) : (
+                                            <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center"><Mic size={12} className="text-blue-500" /></div>
+                                        )}
+                                        <div className="text-left flex flex-col">
+                                            <span className="text-sm font-bold text-gray-900 group-hover:text-blue-600 transition-colors tracking-tight">{activeVoice?.voiceName || "Select a Voice"}</span>
+                                        </div>
+                                    </div>
+                                    <Settings size={14} className="text-gray-400 group-hover:text-blue-500 transition-colors" />
+                                </button>
+                            </div>
+
+                        </div>
+
+                        {/* Two Column Layout (Prompt Editor vs Settings) */}
+                        <div className="flex flex-col lg:flex-row gap-6 xl:gap-8 pb-10 items-stretch min-h-[600px] h-full lg:h-[700px] xl:h-[800px]">
+                            {/* Editor Column */}
+                            <div className="flex-[2] min-w-[300px] bg-white rounded-3xl border border-gray-200 shadow-sm p-4 md:p-6 overflow-hidden flex flex-col h-full transition-all">
+                                <div className="flex items-center justify-between mb-4 px-2">
+                                    <div className="flex items-center gap-2">
+                                        <span className="flex items-center justify-center w-2 h-2 rounded-full bg-green-500"></span>
+                                        <span className="flex items-center justify-center w-2 h-2 rounded-full bg-yellow-400"></span>
+                                        <span className="flex items-center justify-center w-2 h-2 rounded-full bg-red-400"></span>
+                                        <span className="ml-3 text-xs font-bold text-gray-500 uppercase tracking-widest">System Prompt Base</span>
+                                    </div>
+                                    <span className="text-[11px] font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded-md">
+                                        ~{Math.floor(prompt.length / 4)} Tokens
+                                    </span>
+                                </div>
+                                <textarea
+                                    value={prompt}
+                                    onChange={(e) => setPrompt(e.target.value)}
+                                    className="w-full h-full flex-1 p-2 md:p-4 text-[13px] md:text-[14px] leading-relaxed text-gray-700 bg-white border-0 font-medium whitespace-pre-wrap outline-none resize-none scroll-smooth placeholder-gray-300"
+                                    placeholder="Design your AI Agent's core brain instructions here..."
+                                    spellCheck={false}
+                                />
+                            </div>
+
+                            {/* Middle Settings / Tools Column (Red Box Request) */}
+                            <AIAgentToolsSidebar onOpenTransferModal={handleOpenTransferModal} />
+
+                        </div>
+                    </div>
+                )}
+
+                {/* Voice Selection Modal Portal */}
+                {voiceModalOpen && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+                        <div className="bg-white rounded-3xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl relative border border-gray-100 overflow-hidden transform transition-all scale-in">
+                            {/* Modal Header */}
+                            <div className="bg-white px-6 md:px-8 pt-8 pb-5 flex flex-col gap-5 border-b border-gray-100 shrink-0">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <h2 className="text-2xl font-black text-gray-900 tracking-tight">Choose a Voice</h2>
+                                        <p className="text-[13px] font-medium text-gray-500 mt-1">{filteredVoices.length} voices available • Current: {activeVoice ? activeVoice.voiceName : 'None'}</p>
+                                    </div>
+                                    <button onClick={() => setVoiceModalOpen(false)} className="w-8 h-8 bg-gray-50 hover:bg-red-50 text-gray-400 hover:text-red-500 rounded-full flex items-center justify-center transition-colors">
+                                        <X size={18} />
+                                    </button>
+                                </div>
+
+                                <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                                    {/* Search Bar */}
+                                    <div className="flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-300 rounded-xl w-full sm:w-96 shadow-sm focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 transition-all">
+                                        <Search size={16} className="text-gray-400 shrink-0" />
+                                        <input
+                                            type="text"
+                                            placeholder="Search voices..."
+                                            value={voiceSearchQuery}
+                                            onChange={e => setVoiceSearchQuery(e.target.value)}
+                                            className="w-full bg-transparent border-none outline-none text-sm font-medium text-gray-900 placeholder-gray-400"
+                                        />
+                                    </div>
+                                    {/* Filter Pills */}
+                                    <div className="flex bg-gray-100 p-1 rounded-xl w-fit">
+                                        {["All", "Female", "Male"].map(g => (
+                                            <button
+                                                key={g}
+                                                onClick={() => setVoiceGenderFilter(g)}
+                                                className={`px-4 py-2 text-[12px] font-bold rounded-lg transition-all ${voiceGenderFilter === g ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
+                                            >
+                                                {g}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Modal Body (Scrollable Grid) */}
+                            <div className="p-6 md:p-8 bg-slate-50/50 overflow-y-auto flex-1">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                                    {filteredVoices.map(v => (
+                                        <div
+                                            key={v.id}
+                                            onClick={() => { setVoiceId(v.id); setModelId(v.llmModelId || modelId); setVoiceModalOpen(false); }}
+                                            className={`bg-white border rounded-2xl p-4 flex flex-col gap-4 shadow-sm hover:shadow-md hover:border-blue-300 transition-all cursor-pointer group ${voiceId === v.id ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-gray-200'}`}
+                                        >
+                                            <div className="flex items-center gap-4">
+                                                <div className="relative w-12 h-12 rounded-full shadow-sm shrink-0">
+                                                    {v.imgUrl ? (
+                                                        <img src={v.imgUrl} alt={v.voiceName} className="w-full h-full rounded-full object-cover bg-gray-100" />
+                                                    ) : (
+                                                        <div className="w-full h-full rounded-full bg-gradient-to-br from-gray-100 to-gray-200 border border-gray-300 flex items-center justify-center shadow-inner">
+                                                            <AudioLines size={16} className="text-gray-400" />
+                                                        </div>
+                                                    )}
+                                                    <div className={`absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border-2 border-white shadow-sm ${v.gender?.toLowerCase() === 'female' ? 'bg-pink-500' : 'bg-blue-500'}`}></div>
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <h3 className="font-bold text-gray-900 truncate tracking-tight text-[15px] group-hover:text-blue-600 transition-colors">{v.voiceName}</h3>
+                                                    <p className="text-xs text-gray-500 font-medium capitalize truncate">{v.gender || 'Generic'} • {v.modelName}</p>
+                                                </div>
+                                            </div>
+
+                                            <button
+                                                onClick={(e) => playPreview(e, v.id, v.recordingUrl)}
+                                                className={`w-full py-2.5 flex items-center justify-center gap-2 border rounded-xl text-[13px] font-bold transition-all shadow-sm ${playingVoiceId === v.id ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100 hover:border-red-300' : 'border-gray-200 text-gray-700 hover:bg-gray-50 hover:text-blue-600'}`}
+                                            >
+                                                {playingVoiceId === v.id ? (
+                                                    <><Square size={14} className="fill-current opacity-80" /> Stop Preview</>
+                                                ) : (
+                                                    <><Play size={14} className="fill-current opacity-60" /> Preview Audio</>
+                                                )}
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                                {filteredVoices.length === 0 && (
+                                    <div className="flex flex-col items-center justify-center py-20 text-center">
+                                        <AudioLines size={40} className="text-gray-300 mb-4" />
+                                        <h3 className="text-lg font-bold text-gray-900 tracking-tight">No voices found.</h3>
+                                        <p className="text-sm font-medium text-gray-500">Try adjusting your filters.</p>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Modal Footer */}
+                            <div className="bg-white px-6 md:px-8 py-4 border-t border-gray-100 flex items-center justify-between shrink-0">
+                                <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">{filteredVoices.length} Results Rendered</span>
+                                <button onClick={() => setVoiceModalOpen(false)} className="px-6 py-2.5 border border-gray-200 hover:bg-gray-50 rounded-xl text-sm font-bold text-gray-700 transition-colors">
+                                    Close Framework
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Transfer Call Creation Modal Portal */}
+                {showTransferModal && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/30 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+                        <div className="bg-white rounded-[24px] w-full max-w-3xl max-h-[95vh] flex flex-col shadow-2xl relative border border-gray-100 overflow-hidden transform transition-all scale-in">
+
+                            {/* Header */}
+                            <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between shrink-0 bg-white">
+                                <div className="flex items-center gap-2">
+                                    <h2 className="text-[17px] font-black text-gray-800 tracking-tight">Transfer Call</h2>
+                                    <Info size={14} className="text-gray-400 cursor-pointer" />
+                                </div>
+                                <button onClick={() => setShowTransferModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
+                                    <X size={20} />
+                                </button>
+                            </div>
+
+                            {/* Body */}
+                            <div className="p-6 md:p-8 bg-slate-50/30 overflow-y-auto flex-1 flex flex-col gap-6">
+
+                                {loadingTransferTool ? (
+                                    <div className="flex flex-col items-center justify-center py-20 flex-1">
+                                        <Loader2 size={32} className="animate-spin text-blue-500 mb-4" />
+                                        <span className="text-sm font-bold text-gray-600">Syncing with Ravan API...</span>
+                                    </div>
+                                ) : (
+                                    <>
+                                        {/* Name Row */}
+                                        <div className="flex items-start justify-between gap-6">
+                                            <div className="flex-1">
+                                                <label className="block text-[11px] font-semibold text-gray-700 mb-1.5">Name <span className="text-red-500">*</span></label>
+                                                <input type="text" disabled value={transferToolData?.data?.name || ""} className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-[13px] font-medium text-gray-500 cursor-not-allowed shadow-sm" />
+                                            </div>
+                                            <div className="flex items-center gap-2 mt-7">
+                                                <input type="checkbox" checked={transferToolData?.data?.definition?.on_hold_music || false} onChange={(e) => setTransferToolData({ ...transferToolData, data: { ...transferToolData?.data, definition: { ...transferToolData?.data?.definition, on_hold_music: e.target.checked } } })} className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                                                <span className="text-[12px] font-semibold text-gray-600">On Hold Music</span>
+                                            </div>
+                                        </div>
+
+                                        {/* Description */}
+                                        <div>
+                                            <label className="block text-[11px] font-semibold text-gray-500 mb-1.5">Description (Fixed)</label>
+                                            <textarea rows={2} disabled value={transferToolData?.data?.description || ""} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-[13px] font-medium text-gray-400 cursor-not-allowed resize-y shadow-sm" />
+                                        </div>
+
+                                        {/* Execution Message */}
+                                        <div>
+                                            <label className="block text-[11px] font-semibold text-gray-500 mb-1.5">Execution Message</label>
+                                            <input type="text" value={transferToolData?.data?.definition?.execution_msg || ""} onChange={(e) => setTransferToolData({ ...transferToolData, data: { ...transferToolData?.data, definition: { ...transferToolData?.data?.definition, execution_msg: e.target.value } } })} placeholder="Message spoken while the call is being transferred" className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-[13px] font-medium text-gray-400 focus:outline-none shadow-sm" />
+                                        </div>
+
+                                        {/* TRANSFER MODE Box */}
+                                        <div className="p-4 bg-gray-50/50 border border-gray-100 rounded-xl">
+                                            <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-3">TRANSFER MODE</label>
+                                            <div className="flex items-center gap-2">
+                                                <button onClick={() => setTransferToolData({ ...transferToolData, data: { ...transferToolData?.data, definition: { ...transferToolData?.data?.definition, mode: 'cold_transfer' } } })} className={`px-4 py-1.5 rounded-lg text-[12px] font-bold shadow-sm transition-colors ${transferToolData?.data?.definition?.mode === 'cold_transfer' ? 'bg-white border border-gray-200 text-gray-700' : 'bg-transparent text-gray-500 hover:text-gray-700 border border-transparent'}`}>Cold Transfer</button>
+                                                <button onClick={() => setTransferToolData({ ...transferToolData, data: { ...transferToolData?.data, definition: { ...transferToolData?.data?.definition, mode: 'warm_transfer' } } })} className={`px-4 py-1.5 rounded-lg text-[12px] font-bold shadow-sm transition-colors ${transferToolData?.data?.definition?.mode === 'warm_transfer' ? 'bg-white border border-gray-200 text-gray-700' : 'bg-transparent text-gray-500 hover:text-gray-700 border border-transparent'}`}>Warm Transfer</button>
+                                            </div>
+                                        </div>
+
+                                        {/* Custom Prompt Toggle */}
+                                        <div className="flex items-center gap-2">
+                                            <input type="checkbox" checked={transferToolData?.data?.definition?.custom_prompt || false} onChange={(e) => setTransferToolData({ ...transferToolData, data: { ...transferToolData?.data, definition: { ...transferToolData?.data?.definition, custom_prompt: e.target.checked } } })} className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500" />
+                                            <label className="text-[12px] font-semibold text-gray-600">Custom System Prompt</label>
+                                        </div>
+
+                                        {/* Agent Connect config */}
+                                        <div className="p-4 bg-gray-50/50 border border-gray-100 rounded-xl space-y-4">
+                                            <div>
+                                                <div className="flex items-center gap-2 opacity-50">
+                                                    <input type="checkbox" disabled checked={transferToolData?.data?.definition?.transfer_to_assign_agent || false} className="w-4 h-4 text-gray-400 rounded border-gray-200 cursor-not-allowed" />
+                                                    <label className="text-[13px] font-bold text-gray-600">Assign Human Agent</label>
+                                                </div>
+                                                <p className="text-[11px] text-gray-400 mt-1 pl-6 flex items-center gap-1"><Info size={10} /> To enable this, connect GoHighLevel or Salesforce in the Integrations section first.</p>
+                                            </div>
+                                            <div className="flex items-center gap-2 pl-6">
+                                                <input type="checkbox" checked={transferToolData?.data?.definition?.show_user_number || false} onChange={(e) => setTransferToolData({ ...transferToolData, data: { ...transferToolData?.data, definition: { ...transferToolData?.data?.definition, show_user_number: e.target.checked } } })} className="w-4 h-4 text-blue-600 rounded border-gray-300" />
+                                                <label className="text-[12px] font-semibold text-gray-600">Show User Number</label>
+                                                <Info size={12} className="text-gray-400" />
+                                            </div>
+                                        </div>
+
+                                        {/* TRANSFER TO BOX */}
+                                        <div className="p-5 bg-gray-50/50 border border-gray-100 rounded-xl space-y-4">
+                                            <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1">TRANSFER TO</label>
+                                            <div className="flex items-center gap-2 mb-4">
+                                                <button onClick={() => setTransferToolData({ ...transferToolData, data: { ...transferToolData?.data, definition: { ...transferToolData?.data?.definition, transfer_to_type: 'static' } } })} className={`px-4 py-1.5 rounded-lg text-[12px] font-bold shadow-sm transition-colors ${transferToolData?.data?.definition?.transfer_to_type === 'static' ? 'bg-white border border-gray-200 text-gray-700' : 'bg-transparent text-gray-500 hover:text-gray-700 border border-transparent'}`}>Static</button>
+                                                <button onClick={() => setTransferToolData({ ...transferToolData, data: { ...transferToolData?.data, definition: { ...transferToolData?.data?.definition, transfer_to_type: 'dynamic' } } })} className={`px-4 py-1.5 rounded-lg text-[12px] font-bold shadow-sm transition-colors ${transferToolData?.data?.definition?.transfer_to_type === 'dynamic' ? 'bg-white border border-gray-200 text-gray-700' : 'bg-transparent text-gray-500 hover:text-gray-700 border border-transparent'}`}>Dynamic</button>
+                                            </div>
+
+                                            <div className="flex items-start gap-3">
+                                                <div className="w-1/3">
+                                                    <label className="block text-[10px] font-bold text-gray-600 mb-1.5 uppercase">PHONE NUMBER <span className="text-red-500">*</span></label>
+                                                    <select className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-lg text-[13px] font-medium text-gray-700 shadow-sm focus:outline-none">
+                                                        <option>IN +91</option>
+                                                    </select>
+                                                </div>
+                                                <div className="flex-1 mt-[22px]">
+                                                    <div className="relative">
+                                                        <PhoneCall size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                                                        <input type="text" value={transferToolData?.data?.definition?.phone_number || ""} onChange={(e) => setTransferToolData({ ...transferToolData, data: { ...transferToolData?.data, definition: { ...transferToolData?.data?.definition, phone_number: e.target.value } } })} placeholder="Enter destination number" className="w-full pl-9 pr-4 py-2.5 bg-white border border-gray-200 rounded-lg text-[13px] font-medium text-gray-700 shadow-sm focus:outline-none placeholder-gray-300" />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Client Transfer Number */}
+                                        <div>
+                                            <label className="block text-[11px] font-semibold text-gray-600 mb-1.5">Client Transfer Number</label>
+                                            <select value={transferToolData?.data?.definition?.client_transfer_id || ""} onChange={(e) => setTransferToolData({ ...transferToolData, data: { ...transferToolData?.data, definition: { ...transferToolData?.data?.definition, client_transfer_id: e.target.value } } })} className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-lg text-[13px] font-medium text-gray-700 shadow-sm focus:outline-none text-left appearance-none">
+                                                <option value="019f8420-cb91-7048-9aba-c4c8494a8d2a">+918031449343 - Indian Telephony</option>
+                                            </select>
+                                            <div className="relative">
+                                                <ChevronDown size={14} className="absolute right-3 -top-[25px] text-gray-400 pointer-events-none" />
+                                            </div>
+                                        </div>
+
+                                        {/* SCHEDULE */}
+                                        <div className="p-4 bg-gray-50/50 border border-gray-100 rounded-xl space-y-4">
+                                            <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1">SCHEDULE (OPTIONAL)</label>
+                                            <div className="grid grid-cols-3 gap-3">
+                                                <div>
+                                                    <label className="block text-[10px] font-bold text-gray-600 mb-1.5 uppercase">TIMEZONE</label>
+                                                    <div className="relative">
+                                                        <select value={transferToolData?.data?.definition?.timezone || ""} onChange={(e) => setTransferToolData({ ...transferToolData, data: { ...transferToolData?.data, definition: { ...transferToolData?.data?.definition, timezone: e.target.value } } })} className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-[12px] text-gray-500 appearance-none shadow-sm focus:outline-none">
+                                                            <option value="">Select timezone</option>
+                                                            <option value="Asia/Kolkata">Asia/Kolkata</option>
+                                                        </select>
+                                                        <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <label className="block text-[10px] font-bold text-gray-600 mb-1.5 uppercase">START TIME</label>
+                                                    <input type="text" value={transferToolData?.data?.definition?.start_time || ""} onChange={(e) => setTransferToolData({ ...transferToolData, data: { ...transferToolData?.data, definition: { ...transferToolData?.data?.definition, start_time: e.target.value } } })} placeholder="Select time" className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-[12px] text-gray-500 shadow-sm focus:outline-none" />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-[10px] font-bold text-gray-600 mb-1.5 uppercase">END TIME</label>
+                                                    <input type="text" value={transferToolData?.data?.definition?.end_time || ""} onChange={(e) => setTransferToolData({ ...transferToolData, data: { ...transferToolData?.data, definition: { ...transferToolData?.data?.definition, end_time: e.target.value } } })} placeholder="Select time" className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-[12px] text-gray-500 shadow-sm focus:outline-none" />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+
+                            {/* Footer */}
+                            <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3 bg-white shrink-0">
+                                <button onClick={() => setShowTransferModal(false)} className="px-5 py-2 border border-gray-200 rounded-lg text-[13px] font-bold text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
+                                <button disabled={loadingTransferTool} className="px-6 py-2 bg-[#4db5c2] hover:bg-[#3ea5b2] rounded-lg text-[13px] font-bold text-white shadow-sm transition-colors disabled:opacity-50">Save</button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+            </div>
+        </MainLayout >
+    );
+}

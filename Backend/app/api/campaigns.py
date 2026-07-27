@@ -5,7 +5,6 @@ from typing import Optional
 
 from app.database.connection import get_session, engine
 from app.models.domain import Campaign, Contact, Call
-from app.services.exotel import exotel_client
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
@@ -29,32 +28,18 @@ def create_campaign(request: CampaignCreateRequest, db: Session = Depends(get_se
     return new_campaign
 
 def run_campaign_calls(campaign_id: int):
-    """Background task to dial pending contacts via Exotel"""
+    """Background task to dial pending contacts. Disconnected offline mode."""
     with Session(engine) as db:
-        # Fetch all contacts that have NOT been called for this specific campaign
         called_contacts_subq = select(Call.contact_phone).where(Call.campaign_id == campaign_id)
         pending_contacts = db.exec(select(Contact).where(Contact.phone.not_in(called_contacts_subq))).all()
         
         for contact in pending_contacts:
-            # Register initial call attempt in database
             new_call = Call(
                 contact_phone=contact.phone,
                 campaign_id=campaign_id,
-                result_status="Calling"
+                result_status="Offline - Exotel Removed"
             )
             db.add(new_call)
-            db.commit()
-            db.refresh(new_call)
-            
-            # Fire API Request to Exotel backend securely
-            result = exotel_client.trigger_outbound_call(contact.phone, campaign_id)
-            
-            if result.get("success"):
-                new_call.vendor_call_sid = result.get("vendor_call_sid")
-                new_call.result_status = "Pending" # Awaiting Exotel Webhook
-            else:
-                new_call.result_status = "Failed" # Immediate logical failure (e.g., bad number)
-            
             db.commit()
 
 

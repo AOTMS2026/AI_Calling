@@ -6,6 +6,11 @@ class UserBase(SQLModel):
     name: str
     email: str = Field(index=True, unique=True)
     phone: str
+    role: str = Field(default="customer")
+    ravan_agent_id: Optional[str] = None
+    ravan_api_key: Optional[str] = None
+    ravan_org_id: Optional[str] = None
+    identity_hash: Optional[str] = None
 
 class UserCreate(UserBase):
     password: str
@@ -49,3 +54,10 @@ class Call(SQLModel, table=True):
     duration: Optional[int] = None
     transcript: Optional[str] = None
     result_status: str = Field(default="Pending") # Pending, Calling, Answered, Busy, No Answer, Failed, Completed
+    
+    # Ravan Post-Call AI Extraction Meta
+    sentiment: Optional[str] = None
+    summary: Optional[str] = None
+    extracted_email: Optional[str] = None
+    extracted_name: Optional[str] = None
+    recording_url: Optional[str] = None
