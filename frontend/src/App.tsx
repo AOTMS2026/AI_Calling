@@ -9,14 +9,19 @@ import { Dashboard } from './pages/Dashboard';
 import { Agents } from './pages/Agents';
 import { AgentBuilder } from './pages/AgentBuilder';
 import { Campaign } from './pages/Campaign';
-import { Calls } from './pages/Calls';
+import { Contacts } from './pages/Contacts';
+import { ContactDetail } from './pages/ContactDetail';
 import { CampaignDetail } from './pages/CampaignDetail';
 import { Profile } from './pages/Profile';
 import { Settings } from './pages/Settings';
 import { Analytics } from './pages/Analytics';
 import { UserManagement } from './pages/UserManagement';
+import { AssignAgent } from './pages/AssignAgent';
+import { AssignCampaign } from './pages/AssignCampaign';
+import { AssignPhone } from './pages/AssignPhone';
 import { OrganizationSettings } from './pages/OrganizationSettings';
 import { PhoneNumbers } from './pages/PhoneNumbers';
+import { Calls } from './pages/Calls';
 import { GlobalChatBot } from './components/GlobalChatBot';
 import { Toaster } from 'react-hot-toast';
 
@@ -55,13 +60,18 @@ function App() {
           <Route path="/agents/:id" element={<AgentBuilder />} />
           <Route path="/campaigns/outbound" element={<Campaign />} />
           <Route path="/campaigns/outbound/:id" element={<CampaignDetail />} />
-          <Route path="/calls" element={<Calls />} />
+          <Route path="/contacts" element={<Contacts />} />
+          <Route path="/contacts/:id" element={<ContactDetail />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/users" element={<UserManagement />} />
+          <Route path="/assign-agent" element={<AssignAgent />} />
+          <Route path="/assign-campaign" element={<AssignCampaign />} />
+          <Route path="/assign-phone" element={<AssignPhone />} />
           <Route path="/organization" element={<OrganizationSettings />} />
           <Route path="/phone-numbers" element={<PhoneNumbers />} />
+          <Route path="/calls" element={<Calls />} />
 
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>

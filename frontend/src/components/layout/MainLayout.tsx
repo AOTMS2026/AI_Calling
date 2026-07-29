@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Phone, User, Settings, LogOut, FileText, PhoneCall, BarChart, ChevronDown, LayoutDashboard, Search, Coins, Bell, Building2, Users } from 'lucide-react';
+import { Phone, User, Settings, LogOut, FileText, PhoneCall, BarChart, ChevronDown, LayoutDashboard, Search, Coins, Bell, Building2, Users, Bot, History, Target } from 'lucide-react';
+import { apiClient } from '../../api/client';
 
 interface MainLayoutProps {
     children: React.ReactNode;
@@ -8,9 +9,43 @@ interface MainLayoutProps {
 
 export function MainLayout({ children }: MainLayoutProps) {
     const [dropdownOpen, setDropdownOpen] = useState(false);
+    const [liveCredits, setLiveCredits] = useState<number>(0);
+    const [loadingCredits, setLoadingCredits] = useState(true);
     const location = useLocation();
     const navigate = useNavigate();
     const userRole = localStorage.getItem('role') || 'customer';
+
+    // Geometrical Aggregation Polling logic for Credits
+    useEffect(() => {
+        const fetchCredits = async () => {
+            try {
+                const meRes = await apiClient.get('/auth/me');
+                const boundCustomer = meRes.data;
+                const assignedCredits = boundCustomer?.allocated_credits || 500;
+
+                const queryParams = boundCustomer?.ravan_agent_id ? `?agent_id=${boundCustomer.ravan_agent_id}&page_size=5000` : `?page_size=5000`;
+                const callSessionsRes = await apiClient.get(`/api/ravan/calling/call-sessions${queryParams}`);
+                const sessions = callSessionsRes.data?.data?.callSessions || callSessionsRes.data?.data || [];
+
+                const consumedRawCost = (Array.isArray(sessions) ? sessions : []).reduce((sum: number, session: any) => sum + Number(session.cost_total || session.costTotal || 0), 0);
+                const consumedCoins = consumedRawCost * 5.2;
+
+                const remainingCredits = Math.max(0, assignedCredits - consumedCoins);
+
+                // Allow dynamic credit limits mapping cleanly natively
+                setLiveCredits(remainingCredits);
+            } catch (e) {
+                console.error("Layout global credits sync failed:", e);
+            } finally {
+                setLoadingCredits(false);
+            }
+        };
+        fetchCredits();
+
+        // Ensure Top Navbar constantly refreshes Live Data without needing full browser restarts
+        const dynamicLoop = setInterval(fetchCredits, 15000);
+        return () => clearInterval(dynamicLoop);
+    }, []);
 
     // Responsive Dropdown Auto-Close
     useEffect(() => {
@@ -44,50 +79,58 @@ export function MainLayout({ children }: MainLayoutProps) {
                 {/* Navigation Links */}
                 <div className="flex-1 overflow-y-auto py-6 px-4 space-y-8">
 
-                    {/* Platform Group */}
-                    <div>
-                        <h3 className="px-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Platform</h3>
-                        <div className="space-y-1">
-                            <Link to="/dashboard" className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentPath === '/dashboard' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}`}>
-                                <LayoutDashboard size={16} /> Dashboard
-                            </Link>
-                            <Link to="/agents" className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentPath === '/agents' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}`}>
-                                <User size={16} /> Agents
-                            </Link>
-                            <Link to="/knowledge" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors">
-                                <FileText size={16} /> Knowledge Base
-                            </Link>
-                        </div>
-                    </div>
+                    {/* Customer-Oriented Modules Group - Hidden for Admins */}
+                    {userRole !== 'admin' && (
+                        <>
+                            {/* Platform Group */}
+                            <div>
+                                <h3 className="px-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Platform</h3>
+                                <div className="space-y-1">
+                                    <Link to="/dashboard" className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentPath === '/dashboard' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}`}>
+                                        <LayoutDashboard size={16} /> Dashboard
+                                    </Link>
+                                    <Link to="/agents" className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentPath === '/agents' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}`}>
+                                        <User size={16} /> Agents
+                                    </Link>
+                                    <Link to="/knowledge" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors">
+                                        <FileText size={16} /> Knowledge Base
+                                    </Link>
+                                </div>
+                            </div>
 
-                    {/* Campaigns Group */}
-                    <div>
-                        <h3 className="px-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Campaigns</h3>
-                        <div className="space-y-1">
-                            <Link to="/campaigns/inbound" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors">
-                                <PhoneCall size={16} className="transform rotate-180" /> Inbound
-                            </Link>
-                            <Link to="/campaigns/outbound" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors">
-                                <Phone size={16} className="transform rotate-[270deg]" /> Outbound
-                            </Link>
-                        </div>
-                    </div>
+                            {/* Campaigns Group */}
+                            <div>
+                                <h3 className="px-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Campaigns</h3>
+                                <div className="space-y-1">
+                                    <Link to="/campaigns/inbound" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors">
+                                        <PhoneCall size={16} className="transform rotate-180" /> Inbound
+                                    </Link>
+                                    <Link to="/campaigns/outbound" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors">
+                                        <Phone size={16} className="transform rotate-[270deg]" /> Outbound
+                                    </Link>
+                                </div>
+                            </div>
 
-                    {/* Management Group */}
-                    <div>
-                        <h3 className="px-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Management</h3>
-                        <div className="space-y-1">
-                            <Link to="/calls" className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentPath === '/calls' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}`}>
-                                <BarChart size={16} /> Call Logs
-                            </Link>
-                            <Link to="/integrations" className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentPath === '/integrations' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}`}>
-                                <Settings size={16} /> Integrations
-                            </Link>
-                            <Link to="/phone-numbers" className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentPath === '/phone-numbers' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}`}>
-                                <Phone size={16} /> Phone Numbers
-                            </Link>
-                        </div>
-                    </div>
+                            {/* Management Group */}
+                            <div>
+                                <h3 className="px-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Management</h3>
+                                <div className="space-y-1">
+                                    <Link to="/contacts" className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentPath === '/contacts' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}`}>
+                                        <Users size={16} /> Contacts
+                                    </Link>
+                                    <Link to="/calls" className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentPath === '/calls' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}`}>
+                                        <History size={16} /> All Contact History
+                                    </Link>
+                                    <Link to="/integrations" className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentPath === '/integrations' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}`}>
+                                        <Settings size={16} /> Integrations
+                                    </Link>
+                                    <Link to="/phone-numbers" className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentPath === '/phone-numbers' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}`}>
+                                        <Phone size={16} /> Phone Numbers
+                                    </Link>
+                                </div>
+                            </div>
+                        </>
+                    )}
 
                     {/* RBAC Administration Group - Only Visible to Admins */}
                     {userRole === 'admin' && (
@@ -96,6 +139,15 @@ export function MainLayout({ children }: MainLayoutProps) {
                             <div className="space-y-1">
                                 <Link to="/users" className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentPath === '/users' ? 'bg-red-50 text-red-700' : 'text-gray-600 hover:bg-red-50 hover:text-red-700'}`}>
                                     <User size={16} /> User Management
+                                </Link>
+                                <Link to="/assign-agent" className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentPath === '/assign-agent' ? 'bg-red-50 text-red-700' : 'text-gray-600 hover:bg-red-50 hover:text-red-700'}`}>
+                                    <Bot size={16} /> Assign Call_History
+                                </Link>
+                                <Link to="/assign-campaign" className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentPath === '/assign-campaign' ? 'bg-red-50 text-red-700' : 'text-gray-600 hover:bg-red-50 hover:text-red-700'}`}>
+                                    <Target size={16} /> Assign - Compagn
+                                </Link>
+                                <Link to="/assign-phone" className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentPath === '/assign-phone' ? 'bg-red-50 text-red-700' : 'text-gray-600 hover:bg-red-50 hover:text-red-700'}`}>
+                                    <Phone size={16} /> Assign - Phone
                                 </Link>
                                 <Link to="/organization" className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentPath === '/organization' ? 'bg-red-50 text-red-700' : 'text-gray-600 hover:bg-red-50 hover:text-red-700'}`}>
                                     <Building2 size={16} /> Organization Profile
@@ -163,7 +215,7 @@ export function MainLayout({ children }: MainLayoutProps) {
                     <div className="flex items-center gap-3 sm:gap-4 ml-auto">
                         <div className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 rounded-full border border-gray-200 shadow-sm whitespace-nowrap hidden sm:flex">
                             <Coins size={14} className="text-blue-500" />
-                            <span className="text-xs font-bold text-gray-900">4,500 <span className="text-gray-500 font-medium">credits</span></span>
+                            <span className="text-xs font-bold text-gray-900">{loadingCredits ? '...' : (typeof liveCredits === 'number' ? liveCredits.toFixed(4) : liveCredits)} <span className="text-gray-500 font-medium">Credits</span></span>
                         </div>
 
                         <button className="relative p-2 text-gray-600 hover:bg-gray-100 rounded-full transition-colors flex shrink-0">

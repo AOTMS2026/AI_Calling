@@ -10,6 +10,7 @@ export function Campaign() {
     const [campaigns, setCampaigns] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [showModal, setShowModal] = useState(false);
+    const [userRole, setUserRole] = useState('customer');
 
     const [formData, setFormData] = useState({
         name: '',
@@ -36,27 +37,32 @@ export function Campaign() {
     const fetchCampaigns = async () => {
         setLoading(true);
         try {
+            const meRes = await apiClient.get('/auth/me');
+            const currentUser = meRes.data;
+            setUserRole(currentUser.role);
+
+            if (currentUser.role !== 'admin' && !currentUser.ravan_campaign_id) {
+                // Customer has no active campaigns mapped
+                setCampaigns([]);
+                setLoading(false);
+                return;
+            }
+
             const res = await apiClient.get('/api/ravan/campaigns');
             const data = res.data?.data;
             if (data && data.length > 0) {
-                setCampaigns(data);
+                if (currentUser.role !== 'admin') {
+                    const assignedCampaigns = data.filter((c: any) => c.id === currentUser.ravan_campaign_id);
+                    setCampaigns(assignedCampaigns);
+                } else {
+                    setCampaigns(data);
+                }
             } else {
-                // Keep the mock visual if the API returns an empty array to show structural intent
-                throw new Error("No campaigns generated yet.");
+                setCampaigns([]);
             }
         } catch (error) {
             console.error(error);
-            // Fallback for visual mock using the absolute proven native dataset
-            setCampaigns([
-                {
-                    id: "019f9853-20fe-719b-a98c-73caf7e4b33a",
-                    name: "Guntur_IB_2",
-                    status: "paused",
-                    contactStats: { total: 500, contacted: 230, successful: 81, pending: 270 },
-                    fromPhoneNumber: "+918031449343",
-                    createdAt: "2026-07-25T08:10:00Z"
-                }
-            ]);
+            setCampaigns([]);
         } finally {
             setLoading(false);
         }
@@ -92,6 +98,19 @@ export function Campaign() {
         }
     };
 
+    const handleResumeCampaign = async (e: React.MouseEvent, id: string) => {
+        e.stopPropagation();
+        const tid = toast.loading("Resuming campaign...");
+        try {
+            await apiClient.post(`/api/ravan/campaigns/${id}/resume`);
+            toast.success("Campaign resumed successfully!", { id: tid });
+            fetchCampaigns();
+        } catch (err) {
+            console.error(err);
+            toast.error("Failed to resume campaign", { id: tid });
+        }
+    };
+
     const handleDeleteCampaign = async (e: React.MouseEvent, id: string) => {
         e.stopPropagation();
         if (!window.confirm("Are you sure you want to permanently delete this Campaign? This action is irreversible.")) {
@@ -116,13 +135,7 @@ export function Campaign() {
             setAllContacts(res.data?.data || []);
         } catch (err) {
             console.error("Failed fetching contacts for builder:", err);
-            // Mock structural contacts array if API is missing
-            setAllContacts([
-                { id: "c1", name: "GOWTHAMI", phone: "+918506740368" },
-                { id: "c2", name: "Pavani ananya", phone: "+919588987659" },
-                { id: "c3", name: "Durga Bhavani", phone: "+917675946553" },
-                { id: "c4", name: "KISHORE", phone: "+916308568805" }
-            ]);
+            setAllContacts([]);
         }
     };
 
@@ -180,14 +193,16 @@ export function Campaign() {
                 <div className="flex items-center justify-between mb-8">
                     <div>
                         <h1 className="text-2xl font-black text-gray-900 tracking-tight">Outbound Campaigns</h1>
-                        <p className="text-[13px] font-medium text-gray-500 mt-1">Manage and track your automated AI dialing campaigns.</p>
+                        <p className="text-[13px] font-medium text-gray-500 mt-1">{userRole === 'admin' ? 'Manage and track your automated AI dialing campaigns.' : 'View your assigned AI outbound dialing capacity.'}</p>
                     </div>
-                    <button
-                        onClick={() => setShowModal(true)}
-                        className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl text-[13px] font-bold shadow-md shadow-blue-600/20 transition-all flex items-center gap-2 tracking-wide"
-                    >
-                        <Plus size={16} /> New Campaign
-                    </button>
+                    {userRole === 'admin' && (
+                        <button
+                            onClick={() => setShowModal(true)}
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl text-[13px] font-bold shadow-md shadow-blue-600/20 transition-all flex items-center gap-2 tracking-wide"
+                        >
+                            <Plus size={16} /> New Campaign
+                        </button>
+                    )}
                 </div>
 
                 {loading ? (
@@ -238,13 +253,12 @@ export function Campaign() {
                                 <div className="flex gap-2 items-center justify-between w-full">
                                     <div className="flex gap-2">
                                         <button
-                                            onClick={(e) => handleDeleteCampaign(e, camp.id)}
-                                            className="p-2.5 border border-red-100 bg-red-50/50 rounded-lg hover:bg-red-100 transition-colors group/del"
-                                            title="Delete Campaign"
+                                            onClick={(e) => { e.stopPropagation(); navigate(`/campaigns/outbound/${camp.id}?tab=settings`); }}
+                                            className="p-2.5 border border-gray-200 bg-white rounded-lg hover:bg-gray-50 transition-colors group/set"
+                                            title="Settings"
                                         >
-                                            <Settings size={16} className="text-red-400 group-hover/del:text-red-500" />
+                                            <Settings size={16} className="text-gray-500 group-hover/set:text-gray-700" />
                                         </button>
-                                        <button className="p-2.5 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"><MoreHorizontal size={16} className="text-gray-500" /></button>
                                     </div>
 
                                     {camp.status?.toLowerCase() === 'completed' ? (
@@ -261,6 +275,13 @@ export function Campaign() {
                                             className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg transition-colors shadow-sm"
                                         >
                                             Pause Phase
+                                        </button>
+                                    ) : camp.status?.toLowerCase() === 'paused' ? (
+                                        <button
+                                            onClick={(e) => handleResumeCampaign(e, camp.id)}
+                                            className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white text-xs font-bold rounded-lg transition-colors shadow-sm"
+                                        >
+                                            Resume Campaign
                                         </button>
                                     ) : (
                                         <button

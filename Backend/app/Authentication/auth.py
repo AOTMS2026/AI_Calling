@@ -232,8 +232,12 @@ from typing import Optional
 class PatchUserRoleRequest(BaseModel):
     role: Optional[str] = None
     ravan_agent_id: Optional[str] = None
+    ravan_campaign_id: Optional[str] = None
+    ravan_phone_number_id: Optional[str] = None
     ravan_api_key: Optional[str] = None
     ravan_org_id: Optional[str] = None
+    agent_quota: Optional[int] = None
+    allocated_credits: Optional[float] = None
 
 @router.get("/users")
 def get_all_users(db: Session = Depends(get_session)):
@@ -250,8 +254,12 @@ def get_all_users(db: Session = Depends(get_session)):
             "role": u.role,
             "identity_hash": u.identity_hash,
             "ravan_agent_id": u.ravan_agent_id,
+            "ravan_campaign_id": u.ravan_campaign_id,
+            "ravan_phone_number_id": u.ravan_phone_number_id,
             "ravan_api_key": u.ravan_api_key,
-            "ravan_org_id": u.ravan_org_id
+            "ravan_org_id": u.ravan_org_id,
+            "agent_quota": u.agent_quota,
+            "allocated_credits": u.allocated_credits
         })
     return safe_users
 
@@ -269,6 +277,18 @@ def update_user_authorization(user_id: int, request: PatchUserRoleRequest, db: S
         else:
             user.ravan_agent_id = request.ravan_agent_id
             
+    if request.ravan_campaign_id is not None:
+        if request.ravan_campaign_id == "":
+            user.ravan_campaign_id = None
+        else:
+            user.ravan_campaign_id = request.ravan_campaign_id
+            
+    if request.ravan_phone_number_id is not None:
+        if request.ravan_phone_number_id == "":
+            user.ravan_phone_number_id = None
+        else:
+            user.ravan_phone_number_id = request.ravan_phone_number_id
+            
     if request.ravan_api_key is not None:
         if request.ravan_api_key == "":
             user.ravan_api_key = None
@@ -281,6 +301,12 @@ def update_user_authorization(user_id: int, request: PatchUserRoleRequest, db: S
         else:
             user.ravan_org_id = request.ravan_org_id
             
+    if request.agent_quota is not None:
+        user.agent_quota = request.agent_quota
+        
+    if request.allocated_credits is not None:
+        user.allocated_credits = request.allocated_credits
+        
     db.commit()
     db.refresh(user)
     return {"message": "User properties successfully synced securely."}
@@ -316,8 +342,12 @@ async def get_my_profile(current_user: User = Depends(get_current_user)):
         "role": current_user.role,
         "identity_hash": current_user.identity_hash,
         "ravan_agent_id": current_user.ravan_agent_id,
+        "ravan_campaign_id": current_user.ravan_campaign_id,
+        "ravan_phone_number_id": current_user.ravan_phone_number_id,
         "ravan_api_key": current_user.ravan_api_key,
-        "ravan_org_id": current_user.ravan_org_id
+        "ravan_org_id": current_user.ravan_org_id,
+        "agent_quota": current_user.agent_quota,
+        "allocated_credits": current_user.allocated_credits
     }
 
 

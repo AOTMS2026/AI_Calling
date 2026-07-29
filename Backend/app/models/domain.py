@@ -8,9 +8,13 @@ class UserBase(SQLModel):
     phone: str
     role: str = Field(default="customer")
     ravan_agent_id: Optional[str] = None
+    ravan_campaign_id: Optional[str] = None
+    ravan_phone_number_id: Optional[str] = None
     ravan_api_key: Optional[str] = None
     ravan_org_id: Optional[str] = None
     identity_hash: Optional[str] = None
+    agent_quota: int = Field(default=0)
+    allocated_credits: float = Field(default=0.0)
 
 class UserCreate(UserBase):
     password: str

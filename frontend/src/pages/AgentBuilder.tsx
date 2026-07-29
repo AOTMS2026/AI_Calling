@@ -4,7 +4,92 @@ import toast from 'react-hot-toast';
 import { MainLayout } from '../components/layout/MainLayout';
 import { AIAgentToolsSidebar } from '../components/AIAgentTools/AIAgentToolsSidebar';
 import { apiClient } from '../api/client';
-import { Loader2, ArrowLeft, Save, Bot, Cpu, Mic, Settings, Play, X, Search, AudioLines, Square, Info, PhoneCall, ChevronDown } from 'lucide-react';
+import { RoomEvent } from 'livekit-client';
+import { Loader2, ArrowLeft, Save, Bot, Cpu, Mic, Settings, Play, X, Search, AudioLines, Square, Info, PhoneCall, ChevronDown, Globe, Phone, Plus, MessageSquare, MicOff, PhoneOff } from 'lucide-react';
+import { LiveKitRoom, useLocalParticipant, useConnectionState, useRoomContext, RoomAudioRenderer } from '@livekit/components-react';
+import '@livekit/components-styles';
+
+function WebCallActiveUI({ resetTestCall }: { resetTestCall: () => void }) {
+    const { isMicrophoneEnabled, localParticipant } = useLocalParticipant();
+    const state = useConnectionState();
+    const room = useRoomContext();
+    const [transcripts, setTranscripts] = useState<{ id: string, speaker: string, text: string }[]>([]);
+
+    useEffect(() => {
+        if (!room) return;
+        const handleTranscription = (segments: any[], participant: any, publication: any) => {
+            setTranscripts(prev => {
+                let updated = [...prev];
+                segments.forEach((segment: any) => {
+                    if (!segment.text.trim()) return;
+                    const speaker = participant?.identity === room.localParticipant.identity ? 'User' : 'Agent';
+                    const idx = updated.findIndex(t => t.id === segment.id);
+                    if (idx !== -1) {
+                        updated[idx] = { ...updated[idx], text: segment.text };
+                    } else {
+                        updated.push({ id: segment.id, speaker, text: segment.text });
+                    }
+                });
+                return updated;
+            });
+        };
+        room.on(RoomEvent.TranscriptionReceived, handleTranscription);
+        return () => { room.off(RoomEvent.TranscriptionReceived, handleTranscription); };
+    }, [room]);
+
+    return (
+        <div className="flex flex-col items-center justify-center p-8 bg-white min-h-[480px]">
+            {/* Active State Ring with AI Loader */}
+
+            {/* Transcriptions Accordion (Wiped clean mapping live feeds) */}
+            <div className="w-full border border-gray-100 rounded-xl overflow-hidden mb-6 shadow-sm mt-8">
+                <div className="bg-gray-50 p-3.5 flex items-center justify-between cursor-default border-b border-gray-100">
+                    <div className="flex items-center gap-2">
+                        <MessageSquare size={14} className="text-gray-400" />
+                        <span className="text-[12px] font-medium text-gray-600">Transcription Stream</span>
+                        {state === 'connected' && <span className="w-2 h-2 bg-[#0a8ea0] rounded-full animate-pulse shadow-[0_0_5px_#0a8ea0]"></span>}
+                        {transcripts.length > 0 && <span className="px-1.5 py-0.5 bg-gray-200 text-gray-600 rounded text-[9px] font-bold ml-1">{transcripts.length}</span>}
+                    </div>
+                </div>
+                <div className="p-4 bg-white h-40 overflow-y-auto w-full flex flex-col gap-2">
+                    {state !== 'connected' && transcripts.length === 0 && (
+                        <div className="w-full text-center text-[11px] text-gray-400 font-medium uppercase tracking-widest mt-12">Establishing bridge context...</div>
+                    )}
+
+                    {state === 'connected' && transcripts.length === 0 && (
+                        <div className="w-full text-center text-[11px] text-gray-400 font-medium uppercase tracking-widest mt-12 animate-pulse">Listening to neural verbal feed...</div>
+                    )}
+
+                    {transcripts.map(t => (
+                        <div key={t.id} className={`p-3 rounded-lg text-[13px] font-medium max-w-[85%] border shadow-sm ${t.speaker === 'User' ? 'bg-white border-gray-200 ml-auto text-gray-800' : 'bg-purple-50 border-purple-100 text-purple-800 mr-auto'}`}>
+                            <span className="text-[9px] font-black uppercase tracking-widest block mb-1 opacity-60 flex items-center gap-1">
+                                {t.speaker === 'User' ? <Mic size={10} /> : <Bot size={10} />} {t.speaker}
+                            </span>
+                            {t.text}
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            {/* Hardware Controls */}
+            <div className="flex items-center justify-center gap-4 w-full mt-auto pt-4">
+                <button
+                    onClick={() => localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled)}
+                    className={`flex-1 flex justify-center items-center gap-2 px-4 py-2.5 bg-gray-50 border transition-colors rounded-xl text-[12px] font-bold ${!isMicrophoneEnabled ? 'border-red-200 bg-red-50 hover:bg-red-100 text-red-600' : 'border-gray-200 hover:bg-gray-100 text-gray-600'}`}
+                >
+                    {isMicrophoneEnabled ? <Mic size={14} /> : <MicOff size={14} />}
+                    {isMicrophoneEnabled ? "Mute audio" : "Unmute audio"}
+                </button>
+                <button
+                    onClick={() => { room.disconnect(); resetTestCall(); }}
+                    className="flex-1 flex justify-center items-center gap-2 px-4 py-2.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl text-[12px] font-bold border border-red-200 transition-colors shadow-sm"
+                >
+                    <PhoneOff size={14} /> End Call
+                </button>
+            </div>
+        </div>
+    );
+}
 
 export function AgentBuilder() {
     const { id } = useParams();
@@ -33,6 +118,66 @@ export function AgentBuilder() {
     // Audio Playback State Management
     const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
+
+    // Sandbox Webcall Engine mapping
+    const [webCallLoading, setWebCallLoading] = useState(false);
+    const [activeTestRoomUrl, setActiveTestRoomUrl] = useState('');
+    const [activeTestRoomToken, setActiveTestRoomToken] = useState('');
+
+    // Exact Screenshot UI states
+    const [testCallMode, setTestCallMode] = useState<'web' | 'phone'>('web');
+    const [testCallState, setTestCallState] = useState<'idle' | 'calling' | 'active'>('idle');
+    const [testCallFrom, setTestCallFrom] = useState('');
+    const [testCallTo, setTestCallTo] = useState('');
+    const [promptVars, setPromptVars] = useState<{ key: string, value: string }[]>([]);
+    const [metaVars, setMetaVars] = useState<{ key: string, value: string }[]>([]);
+
+    const resetTestCall = () => {
+        setTestCallState('idle');
+        setActiveTestRoomUrl('');
+        setWebCallLoading(false);
+        setPromptVars([]);
+        setMetaVars([]);
+    };
+
+    const initializeTestWebCall = async () => {
+        try {
+            setWebCallLoading(true);
+            const parsedPromptVars = promptVars.reduce((acc, curr) => { if (curr.key) acc[curr.key] = curr.value; return acc; }, {} as any);
+            const parsedMetaVars = metaVars.reduce((acc, curr) => { if (curr.key) acc[curr.key] = curr.value; return acc; }, {} as any);
+
+            const callPayload: any = {
+                type: testCallMode === 'web' ? 'web_call' : 'outbound_call',
+                agent_id: id,
+                metadata: { source: "atm_dashboard_agent_test", ...parsedMetaVars },
+                prompt_dynamic_variables: parsedPromptVars
+            };
+
+            if (testCallMode === 'phone') {
+                callPayload.from_phone_number = testCallFrom;
+                callPayload.to_phone_number = testCallTo;
+            }
+
+            const res = await apiClient.post('/api/ravan/calling/create-call', callPayload);
+            const rawPayload = res.data;
+            const targetPayload = rawPayload.data || rawPayload;
+
+            if (rawPayload.success || targetPayload.access_token) {
+                toast.success(testCallMode === 'web' ? "Webcall Instance Activated! Bridging WebRTC." : "Phone Call successfully initiated on remote target.");
+                setActiveTestRoomUrl(targetPayload.url || '');
+                setActiveTestRoomToken(targetPayload.access_token || '');
+                setTestCallState('active');
+                console.log("LIVEKIT SESSION PAYLOAD GENERATED:", targetPayload);
+            } else {
+                toast.error(rawPayload.message || "Failed to initialize standard sandbox web call");
+            }
+        } catch (error: any) {
+            console.error("Initiation Fault Sequence:", error);
+            toast.error("Internal network proxy block resolving Call API Endpoint.");
+        } finally {
+            setWebCallLoading(false);
+        }
+    };
 
     // Clean up audio instantly if component unmounts or modal closes
     useEffect(() => {
@@ -338,6 +483,130 @@ export function AgentBuilder() {
                             {/* Middle Settings / Tools Column (Red Box Request) */}
                             <AIAgentToolsSidebar onOpenTransferModal={handleOpenTransferModal} />
 
+                        </div>
+
+                        {/* Test Agent Engine Component */}
+                        <div className="mt-8 bg-white border border-gray-100 rounded-2xl shadow-sm flex flex-col relative max-w-[420px] mx-auto w-full mb-10 transition-all">
+                            {/* Header */}
+                            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-6 h-6 rounded-md bg-teal-50 text-teal-600 flex items-center justify-center shrink-0">
+                                        <Mic size={12} />
+                                    </div>
+                                    <span className="text-[13px] font-bold text-gray-900 tracking-tight">Test Agent</span>
+                                </div>
+                                <button onClick={resetTestCall} className="px-3 py-1 bg-white border border-[#0a8ea0] rounded text-[11px] font-bold text-[#0a8ea0] hover:bg-[#0a8ea0]/5 transition-colors">
+                                    Reset
+                                </button>
+                            </div>
+
+                            {testCallState === 'idle' ? (
+                                <div className="p-4 flex flex-col flex-1">
+                                    {/* Segmented Control */}
+                                    <div className="flex bg-gray-50 border border-gray-100 rounded-xl p-1 mb-4">
+                                        <button
+                                            onClick={() => setTestCallMode('web')}
+                                            className={`flex-1 flex items-center justify-center gap-2 py-2 text-[12px] font-bold rounded-lg transition-all ${testCallMode === 'web' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500 hover:text-gray-700'}`}
+                                        >
+                                            <Globe size={14} /> Web Call
+                                        </button>
+                                        <button
+                                            onClick={() => setTestCallMode('phone')}
+                                            className={`flex-1 flex items-center justify-center gap-2 py-2 text-[12px] font-bold rounded-lg transition-all ${testCallMode === 'phone' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500 hover:text-gray-700'}`}
+                                        >
+                                            <Phone size={14} /> Phone Call
+                                        </button>
+                                    </div>
+
+                                    {testCallMode === 'web' ? (
+                                        <div className="space-y-4">
+                                            <div className="flex items-center gap-2 px-4 py-2 border border-gray-100 rounded-xl bg-white shadow-sm">
+                                                <Info size={14} className="text-[#0a8ea0]" />
+                                                <span className="text-[11px] text-gray-500 font-medium">Please note memory is not supported in Webcall.</span>
+                                            </div>
+
+                                            <div className="border border-gray-100 rounded-xl p-4 bg-white">
+                                                <span className="text-[11px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1.5 mb-3">{'{ }'} PROMPT VARIABLES</span>
+                                                <div className="flex flex-col gap-2 mb-3">
+                                                    {promptVars.map((v, i) => (
+                                                        <div key={i} className="flex items-center gap-2">
+                                                            <input type="text" placeholder="Key" value={v.key} onChange={e => { const n = [...promptVars]; n[i].key = e.target.value; setPromptVars(n); }} className="w-1/2 px-3 py-1.5 border border-gray-200 rounded text-xs focus:border-[#0a8ea0] outline-none" />
+                                                            <input type="text" placeholder="Value" value={v.value} onChange={e => { const n = [...promptVars]; n[i].value = e.target.value; setPromptVars(n); }} className="w-1/2 px-3 py-1.5 border border-gray-200 rounded text-xs focus:border-[#0a8ea0] outline-none" />
+                                                            <button onClick={() => setPromptVars(promptVars.filter((_, idx) => idx !== i))} className="text-gray-400 hover:text-red-500"><X size={14} /></button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <button onClick={() => setPromptVars([...promptVars, { key: '', value: '' }])} className="flex items-center gap-1.5 px-3 py-1 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded text-[11px] font-bold text-gray-600 transition-colors">
+                                                    <Plus size={12} /> Add
+                                                </button>
+                                            </div>
+
+                                            <div className="border border-gray-100 rounded-xl p-4 bg-white">
+                                                <span className="text-[11px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1.5 mb-3">{'{ }'} METADATA</span>
+                                                <div className="flex flex-col gap-2 mb-3">
+                                                    {metaVars.map((v, i) => (
+                                                        <div key={i} className="flex items-center gap-2">
+                                                            <input type="text" placeholder="Key" value={v.key} onChange={e => { const n = [...metaVars]; n[i].key = e.target.value; setMetaVars(n); }} className="w-1/2 px-3 py-1.5 border border-gray-200 rounded text-xs focus:border-[#0a8ea0] outline-none" />
+                                                            <input type="text" placeholder="Value" value={v.value} onChange={e => { const n = [...metaVars]; n[i].value = e.target.value; setMetaVars(n); }} className="w-1/2 px-3 py-1.5 border border-gray-200 rounded text-xs focus:border-[#0a8ea0] outline-none" />
+                                                            <button onClick={() => setMetaVars(metaVars.filter((_, idx) => idx !== i))} className="text-gray-400 hover:text-red-500"><X size={14} /></button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <button onClick={() => setMetaVars([...metaVars, { key: '', value: '' }])} className="flex items-center gap-1.5 px-3 py-1 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded text-[11px] font-bold text-gray-600 transition-colors">
+                                                    <Plus size={12} /> Add
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-4 pt-2">
+                                            <div>
+                                                <label className="block text-[11px] font-bold text-gray-500 mb-1.5 uppercase tracking-widest">From Number</label>
+                                                <input type="text" value={testCallFrom} onChange={(e) => setTestCallFrom(e.target.value)} placeholder="+1234567890" className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 focus:outline-none focus:border-[#0a8ea0]" />
+                                            </div>
+                                            <div>
+                                                <label className="block text-[11px] font-bold text-gray-500 mb-1.5 uppercase tracking-widest">To Number</label>
+                                                <input type="text" value={testCallTo} onChange={(e) => setTestCallTo(e.target.value)} placeholder="+0987654321" className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 focus:outline-none focus:border-[#0a8ea0]" />
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <div className="mt-8 pt-4">
+                                        <button
+                                            disabled={!id || id === 'new' || webCallLoading}
+                                            onClick={initializeTestWebCall}
+                                            className="w-full flex items-center justify-center gap-2 py-3 bg-[#0a8ea0] hover:bg-[#077a8a] text-white rounded-[12px] font-bold text-[13px] tracking-wide transition-colors disabled:opacity-50 shadow-[0_4px_14px_0_rgba(10,142,160,0.39)]"
+                                        >
+                                            {webCallLoading ? <Loader2 size={16} className="animate-spin" /> : (testCallMode === 'web' ? <Globe size={16} /> : <PhoneCall size={16} />)}
+                                            {testCallMode === 'web' ? 'Start Web Call' : 'Start Phone Call'}
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                activeTestRoomToken && activeTestRoomUrl && testCallMode === 'web' ? (
+                                    <LiveKitRoom
+                                        serverUrl={activeTestRoomUrl}
+                                        token={activeTestRoomToken}
+                                        connect={true}
+                                        audio={true}
+                                        video={false}
+                                        onDisconnected={resetTestCall}
+                                    >
+                                        <WebCallActiveUI resetTestCall={resetTestCall} />
+                                        <RoomAudioRenderer />
+                                    </LiveKitRoom>
+                                ) : (
+                                    <div className="flex flex-col items-center justify-center p-8 bg-white min-h-[480px]">
+                                        {/* Physical Target Phone Animation */}
+                                        <div className="relative mb-8 mt-4">
+                                            <div className="w-32 h-32 rounded-full border-[6px] border-emerald-400 bg-transparent flex items-center justify-center shadow-[0_0_25px_#34d399] animate-[pulse_1s_ease-in-out_infinite]" style={{ filter: 'drop-shadow(0 0 10px rgba(52,211,153,0.5))' }}></div>
+                                            <div className="absolute inset-0 flex flex-col items-center justify-center text-[13px] font-bold text-gray-600 mt-[140px] tracking-wide uppercase">Ringing Outbound...</div>
+                                        </div>
+                                        <button onClick={resetTestCall} className="w-full flex justify-center items-center gap-2 px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl text-[12px] font-bold transition-colors shadow-sm mt-auto">
+                                            <PhoneOff size={14} /> Stop Simulation
+                                        </button>
+                                    </div>
+                                )
+                            )}
                         </div>
                     </div>
                 )}

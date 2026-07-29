@@ -11,6 +11,12 @@ export function UserManagement() {
     const [savingId, setSavingId] = useState<number | null>(null);
     const [successId, setSuccessId] = useState<number | null>(null);
 
+    // Agent Allocation Modal Workflow State
+    const [isAllocationModalOpen, setIsAllocationModalOpen] = useState(false);
+    const [allocationCustomer, setAllocationCustomer] = useState<number | null>(null);
+    const [agentTargetConfig, setAgentTargetConfig] = useState<string>("");
+    const [isAllocating, setIsAllocating] = useState(false);
+
     const fetchUsers = async () => {
         try {
             const res = await apiClient.get('/auth/users');
@@ -56,6 +62,31 @@ export function UserManagement() {
         (u.identity_hash && u.identity_hash.includes(searchQuery))
     );
 
+    const handleModalAllocate = async () => {
+        if (!allocationCustomer || !agentTargetConfig) return;
+        setIsAllocating(true);
+        const targetUser = users.find(u => u.id === allocationCustomer);
+        try {
+            await apiClient.patch(`/auth/users/${allocationCustomer}`, {
+                role: targetUser?.role || 'customer',
+                ravan_agent_id: agentTargetConfig,
+                ravan_api_key: targetUser?.ravan_api_key,
+                ravan_org_id: targetUser?.ravan_org_id
+            });
+            // instantly structurally sync global lists natively mapping dynamically back!
+            setUsers(users.map(u => u.id === allocationCustomer ? { ...u, ravan_agent_id: agentTargetConfig } : u));
+            toast.success("Successfully allocated Ravan Agents to customer payload!");
+            setIsAllocationModalOpen(false);
+            setAllocationCustomer(null);
+            setAgentTargetConfig("");
+        } catch (error) {
+            console.error("Allocation mapping sync failed", error);
+            toast.error("Failed to aggressively bind Agent Node explicitly.");
+        } finally {
+            setIsAllocating(false);
+        }
+    };
+
     return (
         <MainLayout>
             <div className="w-full bg-white rounded-3xl p-6 md:p-8 min-h-[85vh] border border-gray-200 shadow-sm flex flex-col relative">
@@ -79,6 +110,10 @@ export function UserManagement() {
                             onChange={(e) => setSearchQuery(e.target.value)}
                             className="bg-transparent border-none outline-none text-sm font-medium text-gray-700 w-full placeholder-gray-400"
                         />
+                        <button onClick={() => setIsAllocationModalOpen(true)} className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-sm border border-blue-500 transition-all shrink-0">
+                            <Bot className="w-4 h-4" />
+                            Agents
+                        </button>
                     </div>
                 </div>
 
@@ -174,6 +209,72 @@ export function UserManagement() {
                     </div>
                 )}
             </div>
+
+            {/* Structured Interactive Allocation Overlay Block */}
+            {isAllocationModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-gray-900/60 backdrop-blur-sm">
+                    <div className="bg-white rounded-[24px] shadow-2xl w-full max-w-lg overflow-hidden border border-gray-100 flex flex-col">
+
+                        {/* Header Area */}
+                        <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex flex-col items-center">
+                            <div className="w-12 h-12 bg-blue-100 border border-blue-200 rounded-full flex items-center justify-center mb-4 shadow-[0_0_15px_rgba(59,130,246,0.3)]">
+                                <Bot className="w-6 h-6 text-blue-600" />
+                            </div>
+                            <h2 className="text-xl font-black text-gray-900 tracking-tight text-center">Allocate Node Capacity</h2>
+                        </div>
+
+                        {/* Interactive Data Block */}
+                        <div className="p-6 flex flex-col gap-6">
+
+                            {/* Input Field (Number of agents or Agent IDs) */}
+                            <div>
+                                <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2 block pl-1">Agent Config Profile Maps (UUIDs)</label>
+                                <input
+                                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-[13px] font-mono font-medium text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                                    placeholder="Enter Ravan Agent UUIDs / Config Map..."
+                                    value={agentTargetConfig}
+                                    onChange={(e) => setAgentTargetConfig(e.target.value)}
+                                />
+                                <p className="text-[11px] text-gray-400 mt-2 font-medium px-1">Define explicit active node UUID arrays bound matching physical `.env` scale capacity bounds.</p>
+                            </div>
+
+                            {/* Assign Customer List selection mapping structurally */}
+                            <div>
+                                <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2 block pl-1">Select Customer Map Target</label>
+                                <select
+                                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-[14px] font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all cursor-pointer appearance-none"
+                                    value={allocationCustomer || ''}
+                                    onChange={(e) => setAllocationCustomer(Number(e.target.value))}
+                                >
+                                    <option value="" disabled className="text-gray-400">-- Choose target client --</option>
+                                    {users.filter(u => u.role !== 'admin').map((u) => (
+                                        <option key={u.id} value={u.id}>{u.name} (UUID: {u.identity_hash ? u.identity_hash.substring(0, 8) : 'Pending'})</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+
+                        {/* Control Actions Native Bound Sync */}
+                        <div className="p-6 bg-gray-50 border-t border-gray-100 flex flex-col sm:flex-row gap-3">
+                            <button
+                                onClick={() => setIsAllocationModalOpen(false)}
+                                className="w-full sm:w-1/2 py-3 bg-white border border-gray-300 rounded-xl text-gray-700 font-bold shadow-sm hover:bg-gray-50 transition-colors"
+                            >
+                                Cancel Allocation
+                            </button>
+                            <button
+                                onClick={handleModalAllocate}
+                                disabled={!allocationCustomer || !agentTargetConfig || isAllocating}
+                                className={`w-full sm:w-1/2 py-3 rounded-xl font-bold flex items-center justify-center gap-2 shadow-sm transition-colors ${!allocationCustomer || !agentTargetConfig || isAllocating ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
+                            >
+                                {isAllocating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Bot className="w-5 h-5" />}
+                                Assign Capacity Map
+                            </button>
+                        </div>
+
+                    </div>
+                </div>
+            )}
         </MainLayout >
     );
 }
