@@ -200,7 +200,7 @@ export function CampaignDetail() {
                         </Link>
                         <div>
                             <h1 className="text-xl sm:text-2xl font-black text-gray-900 tracking-tight flex items-center gap-3">
-                                {campaign.name}
+                                {campaign.name?.split(' [HASH:')[0] || 'Unnamed Campaign'}
                                 <span className={`px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest rounded-md ${campaign.status?.toLowerCase() === 'completed' ? 'bg-gray-100 text-gray-600' : 'bg-green-100 text-green-700'}`}>
                                     {campaign.status || 'Active'}
                                 </span>
@@ -503,7 +503,7 @@ export function CampaignDetail() {
                                             type="text"
                                             readOnly
                                             disabled
-                                            value={campaign.name || 'Testing'}
+                                            value={campaign.name?.split(' [HASH:')[0] || 'Testing'}
                                             className="w-full border border-dashed border-gray-200 rounded-xl p-3 bg-gray-50 text-gray-400 text-sm font-medium cursor-not-allowed"
                                         />
                                     </div>

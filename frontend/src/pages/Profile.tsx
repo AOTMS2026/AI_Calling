@@ -7,8 +7,6 @@ export function Profile() {
     const [profile, setProfile] = useState<any>(null);
 
     // In a real scenario you would have a GET /auth/me endpoint.
-    // For now, we decode it directly from the token or local storage, or fetch users and find self.
-    // Since we added identity_hash to LocalStorage? We didn't. 
     // Let's rely on localStorage holding basic JWT info, and fetching from /auth/users if we have to, 
     // or better, a dedicated /auth/me route. We'll use a mocked local fetch.
     useEffect(() => {
@@ -88,21 +86,7 @@ export function Profile() {
                             <Shield className="w-4 h-4 text-gray-400" /> Security Architecture
                         </h3>
 
-                        <div className="p-6 bg-gradient-to-br from-gray-900 to-black rounded-2xl border border-gray-800 shadow-xl relative overflow-hidden">
-                            <div className="absolute top-0 right-0 -mr-4 -mt-4 w-24 h-24 bg-white/5 rounded-full blur-2xl"></div>
 
-                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-3 flex items-center gap-2">
-                                <Key className="w-3.5 h-3.5" /> 64-Bit Platform Identity
-                            </label>
-
-                            <div className="px-4 py-3 bg-black/50 rounded-xl text-[12px] font-mono font-medium text-blue-400 border border-gray-800 break-all leading-relaxed relative z-10 shadow-inner">
-                                {profile?.identity_hash || 'c8f3b1456d9a0e23...'}
-                            </div>
-
-                            <p className="text-[11px] text-gray-500 font-medium mt-4 leading-relaxed max-w-[90%]">
-                                This secure hash uniquely identifies your account across the Ravan telemetry layer. Do not share this openly.
-                            </p>
-                        </div>
 
                         {profile?.ravan_agent_id && (
                             <div className="mt-4 p-5 bg-blue-50/50 rounded-2xl border border-blue-100">

@@ -6,6 +6,7 @@ import {
     Clock, Ghost, Phone, Link2, Target, Zap,
     TrendingUp, Calendar, ChevronDown, CheckCircle2, Loader2
 } from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
 
 export function Dashboard() {
     const [contacts, setContacts] = useState<any[]>([]);
@@ -13,76 +14,74 @@ export function Dashboard() {
     const [loading, setLoading] = useState(true);
     const [usageTab, setUsageTab] = useState<'day' | 'week' | 'month'>('month');
 
-    // New Additional Analytics Model
+    // Proper React state for DB metrics (not window globals!)
     const [analytics, setAnalytics] = useState<any>(null);
+    const [totalContacts, setTotalContacts] = useState<number>(0);
+    const [outboundCampaignsCount, setOutboundCampaignsCount] = useState<number>(0);
+    const [dbMetrics, setDbMetrics] = useState<{
+        total_cost: number;
+        total_duration_sec: number;
+        total_calls: number;
+        success_calls: number;
+        failed_calls: number;
+        success_rate: number;
+    } | null>(null);
 
     useEffect(() => {
         const fetchDashboardData = async () => {
             try {
-                const [contactsRes, agentsRes, meRes] = await Promise.all([
-                    apiClient.get('/api/ravan/contacts'),
-                    apiClient.get('/api/ravan/agents'),
+                const [agentsRes, meRes] = await Promise.all([
+                    apiClient.get('/agents/'),
                     apiClient.get('/auth/me').catch(() => null)
                 ]);
 
-                let validContacts = contactsRes.data?.data || [];
-                let mappedQuota = 0;
-                let boundCustomer: any = null;
+                // Fire Sessions sync lazily in the background to prevent UI blocking for graphs
+                apiClient.get('/api/ravan/calling/call-sessions?page_size=5000').then(sessionsRes => {
+                    let validSessions = sessionsRes.data?.data?.callSessions || sessionsRes.data?.data || [];
+                    setContacts(validSessions);
+                }).catch(() => setContacts([]));
 
-                // Intelligently aggregate customer specific native bounded logic pulling strictly mapped quotas inside DB!
-                if (meRes && meRes.data) {
-                    boundCustomer = meRes.data;
-
-                    if (typeof boundCustomer.agent_quota === 'number' && boundCustomer.agent_quota > 0) {
-                        mappedQuota = boundCustomer.agent_quota;
-                    }
-
-                    // Secure Sandbox Limit constraint tracking natively over Target Ravan Agent UUID assigned from UserManagement!
-                    if (boundCustomer.ravan_agent_id && boundCustomer.role !== 'admin') {
-                        validContacts = validContacts.filter((c: any) =>
-                            c.agentId === boundCustomer.ravan_agent_id ||
-                            c.agent_id === boundCustomer.ravan_agent_id ||
-                            c.campaignId === boundCustomer.ravan_agent_id ||
-                            (c.campaign && c.campaign.id === boundCustomer.ravan_agent_id)
-                        );
-                    }
+                let rawAgentsData = agentsRes.data?.data || agentsRes.data || [];
+                if (!Array.isArray(rawAgentsData) && typeof rawAgentsData === 'object') {
+                    const arrays = Object.values(rawAgentsData).filter(v => Array.isArray(v));
+                    if (arrays.length > 0) rawAgentsData = arrays[0];
+                    else rawAgentsData = [rawAgentsData];
                 }
+                setAgentCount(rawAgentsData.length);
 
-                setContacts(validContacts);
-                setAgentCount(mappedQuota > 0 ? mappedQuota : (agentsRes.data?.meta?.total || 0));
-
-                // Force super-fast global coins cost aggregation reading native Ravan logs!
+                // Query Pre-Aggregated DB metrics — properly set into React state so UI re-renders!
                 try {
-                    const globalAggRes = await apiClient.get(`/api/ravan/calling/global-cost-aggregation`);
-                    if (globalAggRes.data && globalAggRes.data.success) {
-                        (window as any)._oldGlobalTotal = globalAggRes.data.total_coins;
+                    const metricsRes = await apiClient.get(`/api/ravan/dashboard/metrics`);
+                    const m = metricsRes.data?.data;
+                    if (m) {
+                        setDbMetrics({
+                            total_cost: m.total_cost ?? 0,
+                            total_duration_sec: m.total_duration_sec ?? 0,
+                            total_calls: m.total_calls ?? 0,
+                            success_calls: m.success_calls ?? 0,
+                            failed_calls: m.failed_calls ?? 0,
+                            success_rate: m.success_rate ?? 0,
+                        });
                     }
-                } catch (aggErr) {
-                    console.error('Global Cost Aggregation Engine failed:', aggErr);
+                } catch (metricsErr) {
+                    console.error('Dashboard DB metrics fetch failed:', metricsErr);
                 }
 
-                // Fetch Call Sessions for EXACT cost_total sum via addition operator across all history!
-                try {
-                    const queryParams = boundCustomer?.ravan_agent_id ? `?agent_id=${boundCustomer.ravan_agent_id}&page_size=5000` : `?page_size=5000`;
-                    const callSessionsRes = await apiClient.get(`/api/ravan/calling/call-sessions${queryParams}`);
-                    const sessions = callSessionsRes.data?.data?.callSessions || callSessionsRes.data?.data || [];
-                    const preciseSum = (Array.isArray(sessions) ? sessions : []).reduce((sum: number, session: any) => sum + Number(session.cost_total || session.costTotal || 0), 0);
-                    (window as any)._preciseCreditsTotal = preciseSum;
-                } catch (sessionErr) {
-                    console.error('Explicit Session Cost engine failed:', sessionErr);
-                }
+                // Fetch actual contacts count
+                apiClient.get('/api/ravan/contacts?limit=5000').then(contactsRes => {
+                    const contactsList = contactsRes.data?.data || [];
+                    setTotalContacts(contactsList.length);
+                }).catch(() => setTotalContacts(0));
 
-                // New Additional Method: Rapid Analytics Extractor based on natively bound Campaign ID
-                try {
-                    if (boundCustomer?.ravan_campaign_id) {
-                        const analyticsRes = await apiClient.get(`/api/ravan/campaigns/${boundCustomer.ravan_campaign_id}/analytics`);
-                        if (analyticsRes.data && analyticsRes.data.success) {
-                            setAnalytics(analyticsRes.data.data);
-                        }
+                // Fetch campaigns count
+                apiClient.get('/api/ravan/campaigns?limit=500').then(campaignsRes => {
+                    let campaignsList = campaignsRes.data?.data || campaignsRes.data || [];
+                    if (!Array.isArray(campaignsList) && typeof campaignsList === 'object') {
+                        const arrays = Object.values(campaignsList).filter(v => Array.isArray(v));
+                        campaignsList = arrays.length > 0 ? arrays[0] : [];
                     }
-                } catch (analyticsErr) {
-                    console.error("Failed to fetch additional analytics pipeline", analyticsErr);
-                }
+                    setOutboundCampaignsCount(campaignsList.length);
+                }).catch(() => setOutboundCampaignsCount(0));
 
             } catch (err) {
                 console.error("Dashboard Analytics extraction failed", err);
@@ -93,24 +92,49 @@ export function Dashboard() {
         fetchDashboardData();
     }, []);
 
-    // Perform live structural O(n) geometric aggregations natively over Ravan data endpoints!
-    const totalCalls = analytics?.total_calls ?? contacts.filter(c => c.callDurationSec > 0 || c.status === 'completed' || c.status === 'success' || c.status === 'failed').length;
+    // Secure WebSocket Auto-Refresh natively tracking CallRecord Webhooks!
 
-    // Format duration visually to perfectly align with Calls.tsx 
-    const rawTotalSeconds = analytics?.total_seconds ?? contacts.reduce((sum, c) => sum + (c.callDurationSec || 0), 0);
+    // Secure WebSocket Auto-Refresh natively tracking CallRecord Webhooks!
+    useEffect(() => {
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        // Connect accurately to FastAPI ws mount
+        const wsUrl = import.meta.env.MODE === 'production'
+            ? `${wsProtocol}//${window.location.host}/ws`
+            : 'ws://localhost:8000/ws';
+
+        const ws = new WebSocket(wsUrl);
+        ws.onmessage = (event) => {
+            if (event.data === 'update') {
+                console.log("⚡ INJECTION DETECTED: Hot Relaying Native Dashboard...");
+                window.location.reload();
+            }
+        };
+        return () => ws.close();
+    }, []);
+
+    // Perform live structural O(n) geometric aggregations natively over Ravan data endpoints!
+    const totalCalls = dbMetrics?.total_calls || analytics?.total_calls || contacts.filter(c => c.callDurationSec > 0 || c.status === 'completed' || c.status === 'success' || c.status === 'failed').length;
+
+    // Format duration from DB metrics or fallback to live sessions sum
+    const rawTotalSeconds = dbMetrics?.total_duration_sec || analytics?.total_seconds || contacts.reduce((sum, c) => sum + (c.callDurationSec || c.duration_sec || 0), 0);
     const mm = Math.floor(rawTotalSeconds / 60);
     const ss = Math.floor(rawTotalSeconds % 60);
-    const formattedDuration = `${mm}m ${ss}s`;
+    const formattedDuration = rawTotalSeconds > 0 ? `${mm}m ${ss}s` : '0m 0s';
 
-    const successCalls = contacts.filter(c => c.status === 'success' || c.status === 'completed').length;
-    const successRate = analytics?.success_rate ?? (totalCalls > 0 ? ((successCalls / totalCalls) * 100).toFixed(2) : "0.00");
+    const successCalls = dbMetrics?.success_calls || contacts.filter(c => c.status === 'success' || c.status === 'completed').length;
+    let _rate = dbMetrics?.success_rate || analytics?.success_rate || (totalCalls > 0 ? ((successCalls / totalCalls) * 100) : 0);
+    if (typeof _rate === 'number') _rate = _rate.toFixed(2);
+    const successRate = _rate;
 
-    // Use precisely aggregated details backend pipeline or calculate manually by summing duration from all contact history
-    const totalCreditsSpent = typeof (window as any)._preciseCreditsTotal === 'number' ? (window as any)._preciseCreditsTotal : contacts.reduce((sum, c) => sum + Number((c.callDurationSec || c.duration_sec || 0) / 60.0), 0);
+    // Total credits consumed from DB or fallback to minute-based estimate from sessions
+    const totalCreditsSpent = dbMetrics?.total_cost || contacts.reduce((sum, c) => sum + Number((c.callDurationSec || c.duration_sec || 0) / 60.0), 0);
 
     // Live Data Generation for Graph Mapping Today
     const today = new Date().toISOString().split('T')[0];
-    const todayContacts = contacts.filter(c => c.createdAt && c.createdAt.startsWith(today));
+    const todayContacts = contacts.filter(c => {
+        const targetStr = c.startedAt || c.createdAt;
+        return targetStr && targetStr.startsWith(today);
+    });
 
     // Abstract real-time live calls dynamically mapped off queue latency state
     const liveCalls = analytics?.live_calls ?? contacts.filter(c => c.status === 'dialing' || c.status === 'pending' || c.status === 'in-progress').length;
@@ -119,12 +143,20 @@ export function Dashboard() {
     const hourlyCounts = analytics?.hourly_map ?? Array(24).fill(0);
     if (!analytics) {
         todayContacts.forEach(c => {
-            const hour = new Date(c.createdAt).getHours();
-            hourlyCounts[hour] += 1;
+            const targetStr = c.startedAt || c.createdAt;
+            if (targetStr) {
+                const hour = new Date(targetStr).getHours();
+                hourlyCounts[hour] += 1;
+            }
         });
     }
 
+    const outboundCount = todayContacts.filter(c => c.channel?.toLowerCase().includes('outbound')).length;
+    const inboundCount = todayContacts.filter(c => c.channel?.toLowerCase().includes('inbound')).length;
+    const webCount = todayContacts.filter(c => c.channel?.toLowerCase().includes('web')).length;
+
     const maxPerHour = Math.max(...hourlyCounts, 1); // Avoid div zero
+
     // Build SVG coordinates mathematically (X mapping 0-100, Y mapping 100-0)
     const points = hourlyCounts.map((val: number, idx: number) => {
         const x = (idx / 23) * 100;
@@ -151,45 +183,79 @@ export function Dashboard() {
 
             if (usageTab === 'day') {
                 const todayStr = now.toISOString().split('T')[0];
-                filteredContacts = filteredContacts.filter(c => c.createdAt && c.createdAt.startsWith(todayStr));
+                filteredContacts = filteredContacts.filter(c => {
+                    const targetStr = c.startedAt || c.createdAt;
+                    return targetStr && targetStr.startsWith(todayStr)
+                });
                 filteredContacts.forEach(c => {
-                    const h = new Date(c.createdAt).getHours();
-                    mappedData[Math.floor(h / 2)] += (c.callDurationSec || c.duration_sec || 0) / 60.0;
+                    const targetStr = c.startedAt || c.createdAt;
+                    const h = new Date(targetStr).getHours();
+                    mappedData[Math.floor(h / 2)] += (c.durationSec || c.callDurationSec || c.duration_sec || 0) / 60.0;
                 });
             }
             else if (usageTab === 'week') {
                 const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-                filteredContacts = filteredContacts.filter(c => c.createdAt && new Date(c.createdAt) >= lastWeek);
+                filteredContacts = filteredContacts.filter(c => {
+                    const targetStr = c.startedAt || c.createdAt;
+                    return targetStr && new Date(targetStr) >= lastWeek;
+                });
                 filteredContacts.forEach(c => {
-                    const dayOffset = Math.floor((now.getTime() - new Date(c.createdAt).getTime()) / (24 * 60 * 60 * 1000));
+                    const targetStr = c.startedAt || c.createdAt;
+                    const dayOffset = Math.floor((now.getTime() - new Date(targetStr).getTime()) / (24 * 60 * 60 * 1000));
                     if (dayOffset >= 0 && dayOffset < 7) {
-                        mappedData[6 - dayOffset] += (c.callDurationSec || c.duration_sec || 0) / 60.0;
+                        mappedData[6 - dayOffset] += (c.durationSec || c.callDurationSec || c.duration_sec || 0) / 60.0;
                     }
                 });
             }
             else if (usageTab === 'month') {
                 const lastMonth = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-                filteredContacts = filteredContacts.filter(c => c.createdAt && new Date(c.createdAt) >= lastMonth);
+                filteredContacts = filteredContacts.filter(c => {
+                    const targetStr = c.startedAt || c.createdAt;
+                    return targetStr && new Date(targetStr) >= lastMonth;
+                });
                 filteredContacts.forEach(c => {
-                    const chunks = Math.floor((now.getTime() - new Date(c.createdAt).getTime()) / (3 * 24 * 60 * 60 * 1000));
+                    const targetStr = c.startedAt || c.createdAt;
+                    const chunks = Math.floor((now.getTime() - new Date(targetStr).getTime()) / (3 * 24 * 60 * 60 * 1000));
                     if (chunks >= 0 && chunks < 10) {
-                        mappedData[9 - chunks] += (c.callDurationSec || c.duration_sec || 0) / 60.0;
+                        mappedData[9 - chunks] += (c.durationSec || c.callDurationSec || c.duration_sec || 0) / 60.0;
                     }
                 });
             }
         }
 
         const maxScale = Math.max(...mappedData, 0.1);
-        const polyPoints = mappedData.map((val, idx) => {
+        const polyPoints = mappedData.map((val: number, idx: number) => {
             const x = (idx / (mappedData.length - 1 || 1)) * 100;
             const y = 100 - ((val / maxScale) * 80);
             return `${x},${y}`;
         }).join(' ');
 
-        return { points: polyPoints, max: (maxScale === 0.1 ? 0 : maxScale), total: mappedData.reduce((a, b) => a + b, 0) };
+        const chartData = mappedData.map((val: number, idx: number) => {
+            let label = '';
+            if (usageTab === 'day') {
+                label = `${(idx * 2).toString().padStart(2, '0')}:00`;
+            } else if (usageTab === 'week') {
+                const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+                label = days[idx % 7] || `D${idx + 1}`;
+            } else {
+                label = `Wk ${idx + 1}`;
+            }
+            return {
+                name: label,
+                duration: parseFloat(val.toFixed(2))
+            };
+        });
+
+        return { points: polyPoints, max: (maxScale === 0.1 ? 0 : maxScale), total: mappedData.reduce((a, b) => a + b, 0), chartData };
     };
 
     const trendData = getIntervalBoundData();
+
+    // Prepare data for Today's Activity Bar Chart
+    const activityChartData = hourlyCounts.map((val: number, idx: number) => ({
+        time: `${idx.toString().padStart(2, '0')}:00`,
+        calls: val
+    }));
 
     const peakHourIndex = hourlyCounts.indexOf(Math.max(...hourlyCounts));
     const peakHourCount = hourlyCounts[peakHourIndex];
@@ -205,7 +271,7 @@ export function Dashboard() {
                         Good Evening, ramanadham
                     </h1>
                     <p className="text-gray-500 text-sm md:text-base">
-                        Your agents structured <span className="font-semibold text-gray-900">{loading ? <Loader2 size={12} className="inline animate-spin text-blue-500" /> : totalCalls} calls</span> this month mapping <span className="text-green-600 font-semibold">{loading ? '--' : successRate}% success</span> boundary.
+                        Your agents structured <span className="font-semibold text-gray-900">{loading ? <Loader2 size={12} className="inline animate-spin text-blue-500" /> : totalCalls} calls</span> this month.
                     </p>
                 </div>
 
@@ -245,7 +311,7 @@ export function Dashboard() {
                                 <Phone size={16} className="text-blue-500 mb-6 inline-block" />
                                 <div>
                                     <h3 className="text-gray-500 text-[10px] uppercase font-bold tracking-wider mb-1">Live Calls</h3>
-                                    <p className="text-2xl font-bold text-gray-900">{loading ? <Loader2 size={20} className="animate-spin text-gray-400" /> : liveCalls}</p>
+                                    <p className="text-2xl font-bold text-gray-900">{loading ? <Loader2 size={20} className="animate-spin text-gray-400" /> : totalCalls}</p>
                                 </div>
                             </div>
 
@@ -255,20 +321,18 @@ export function Dashboard() {
                                 <div>
                                     <h3 className="text-gray-500 text-[10px] uppercase font-bold tracking-wider mb-1">Total Consumed</h3>
                                     <p className="text-2xl font-black text-gray-900 flex items-center gap-2">
-                                        {loading ? <Loader2 size={18} className="animate-spin text-gray-400" /> : <span className="text-teal-600 tracking-tight">{(totalCreditsSpent * 5.2).toFixed(4)} Coins</span>}
+                                        {loading ? <Loader2 size={18} className="animate-spin text-gray-400" /> : <span className="text-teal-600 tracking-tight">{Number(totalCreditsSpent).toFixed(4)}</span>}
                                     </p>
                                 </div>
                             </div>
-
-
 
                             {/* Card 5 */}
                             <div className="bg-white border border-gray-200 rounded-xl p-5 hover:border-gray-300 shadow-sm transition-colors relative group">
                                 <Target size={16} className="text-gray-400 mb-6 inline-block" />
                                 <div>
-                                    <h3 className="text-gray-500 text-[10px] uppercase font-bold tracking-wider mb-1">Success Rate</h3>
+                                    <h3 className="text-gray-500 text-[10px] uppercase font-bold tracking-wider mb-1">All Contacts</h3>
                                     <p className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-                                        {loading ? <Loader2 size={20} className="animate-spin text-gray-400" /> : `${successRate}%`}
+                                        {loading ? <Loader2 size={20} className="animate-spin text-gray-400" /> : totalContacts}
                                     </p>
                                 </div>
                             </div>
@@ -276,54 +340,46 @@ export function Dashboard() {
                             {/* Card 6 */}
                             <div className="bg-white border border-gray-200 rounded-xl p-5 hover:border-gray-300 shadow-sm transition-colors relative group">
                                 <Zap size={16} className="text-gray-400 mb-6 inline-block" />
-                                <div className="absolute top-8 left-10 opacity-30">
-                                    <svg width="40" height="20" viewBox="0 0 40 20">
-                                        <path d="M 0,20 L 10,12 L 20,15 L 40,2" fill="none" stroke="#e5e7eb" strokeWidth="2" />
-                                    </svg>
-                                </div>
                                 <div>
-                                    <h3 className="text-gray-500 text-[10px] uppercase font-bold tracking-wider mb-1">Conversion</h3>
-                                    <p className="text-2xl font-bold text-gray-900">{analytics?.conversion != null ? `${analytics.conversion}%` : `${successRate}%`}</p>
+                                    <h3 className="text-gray-500 text-[10px] uppercase font-bold tracking-wider mb-1">Outbound Campaigns</h3>
+                                    <p className="text-2xl font-bold text-gray-900">{loading ? <Loader2 size={20} className="animate-spin text-gray-400" /> : outboundCampaignsCount}</p>
                                 </div>
                             </div>
                         </div>
 
-                        {/* Bottom Left: Usage Trends Placeholder */}
-                        <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-6 relative flex-1 min-h-[220px]">
-                            <div className="flex justify-between items-start mb-8">
+                        {/* Bottom Left: Usage Trends Recharts Area */}
+                        <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-6 relative flex flex-col min-h-[350px]">
+                            <div className="flex justify-between items-start mb-6">
                                 <div>
                                     <h2 className="text-base font-bold text-gray-900 mb-0.5">Usage Trends</h2>
                                     <p className="text-xs text-gray-500">Live call duration mapping (minutes)</p>
                                 </div>
                                 <div className="flex bg-gray-50 p-1 rounded-lg border border-gray-200">
-                                    <button onClick={() => setUsageTab('day')} className={`px-3 py-1 text-xs font-medium rounded-md ${usageTab === 'day' ? 'bg-white text-gray-900 shadow-sm border border-gray-200' : 'text-gray-500 hover:text-gray-900'}`}>Day</button>
-                                    <button onClick={() => setUsageTab('week')} className={`px-3 py-1 text-xs font-medium rounded-md ${usageTab === 'week' ? 'bg-white text-gray-900 shadow-sm border border-gray-200' : 'text-gray-500 hover:text-gray-900'}`}>Week</button>
-                                    <button onClick={() => setUsageTab('month')} className={`px-3 py-1 text-xs font-medium rounded-md ${usageTab === 'month' ? 'bg-white text-gray-900 shadow-sm border border-gray-200' : 'text-gray-500 hover:text-gray-900'}`}>Month</button>
+                                    <button onClick={() => setUsageTab('day')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${usageTab === 'day' ? 'bg-white text-blue-600 shadow-sm border border-gray-100' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100/50'}`}>Day</button>
+                                    <button onClick={() => setUsageTab('week')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${usageTab === 'week' ? 'bg-white text-blue-600 shadow-sm border border-gray-100' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100/50'}`}>Week</button>
+                                    <button onClick={() => setUsageTab('month')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${usageTab === 'month' ? 'bg-white text-blue-600 shadow-sm border border-gray-100' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100/50'}`}>Month</button>
                                 </div>
                             </div>
 
-                            {/* Abstract Mock Line Chart overlay */}
-                            <div className="absolute bottom-6 left-6 right-6 h-32 flex items-end">
-                                <div className="w-full h-full border-l border-b border-gray-200 relative">
-                                    {/* Fake Y Axis precisely bound to Duration in minutes! */}
-                                    <div className="absolute -left-4 bottom-0 text-[9px] text-gray-400">0m</div>
-                                    <div className="absolute -left-4 top-[50%] -translate-y-1/2 text-[9px] text-gray-400">{Math.round(trendData.max / 2)}m</div>
-                                    <div className="absolute -left-6 top-0 text-[9px] text-gray-400">{trendData.max.toFixed(1)}m</div>
-                                    {/* SVG Line mapping dynamically onto the exact subset bounds parsed physically! */}
-                                    <svg className="w-full h-full overflow-visible" preserveAspectRatio="none" viewBox="0 0 100 100">
+                            <div className="flex-1 w-full mt-2">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <AreaChart data={trendData.chartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
                                         <defs>
-                                            <linearGradient id="trendGradient" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.2" />
-                                                <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
+                                            <linearGradient id="colorDuration" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+                                                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
                                             </linearGradient>
                                         </defs>
-                                        <polygon points={`0,100 ${trendData.points} 100,100`} fill="url(#trendGradient)" className="transition-all duration-300" />
-                                        <polyline points={trendData.points} fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="transition-all duration-300" />
-                                        {trendData.total === 0 && (
-                                            <line x1="0" y1="100" x2="100" y2="100" stroke="#9ca3af" strokeWidth="1" strokeDasharray="2 4" />
-                                        )}
-                                    </svg>
-                                </div>
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#9ca3af', fontWeight: 600 }} dy={10} />
+                                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#9ca3af', fontWeight: 600 }} tickFormatter={(value) => `${value}m`} />
+                                        <Tooltip
+                                            contentStyle={{ borderRadius: '12px', border: '1px solid #f3f4f6', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1)', fontWeight: 'bold', fontSize: '13px' }}
+                                            itemStyle={{ color: '#3b82f6' }}
+                                        />
+                                        <Area type="monotone" dataKey="duration" name="Duration" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorDuration)" animationDuration={1500} />
+                                    </AreaChart>
+                                </ResponsiveContainer>
                             </div>
                         </div>
 
@@ -358,35 +414,20 @@ export function Dashboard() {
                                 <p className="text-xs text-gray-500 mb-6">Success vs failed per week</p>
                             </div>
 
-                            <div className="flex gap-6 items-center">
-                                {/* SVG Donut representing 0% */}
-                                <div className="relative w-16 h-16 shrink-0">
-                                    <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
-                                        <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#f3f4f6" strokeWidth="3" />
-                                        <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#3b82f6" strokeWidth="3" strokeDasharray={`${parseFloat(successRate)}, 100`} />
-                                    </svg>
-                                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center text-gray-900 font-bold text-[10px]">
-                                        {loading ? <Loader2 size={10} className="animate-spin mx-auto" /> : `${Math.round(parseFloat(successRate))}%`}<br /><span className="text-[7px] text-gray-500 font-medium leading-none">SUCCESS</span>
-                                    </div>
-                                </div>
-
+                            <div className="w-full">
                                 {/* Outcomes Grid */}
-                                <div className="grid grid-cols-2 gap-3 w-full">
-                                    <div className="bg-gray-50 border border-gray-200 p-3 rounded-lg flex flex-col items-start min-w-[70px]">
+                                <div className="grid grid-cols-3 gap-3 w-full">
+                                    <div className="bg-gray-50 border border-gray-200 p-3 rounded-lg flex flex-col items-start w-full">
                                         <span className="text-gray-500 text-[9px] font-bold tracking-widest uppercase mb-1">TOTAL</span>
                                         <span className="text-gray-900 font-bold text-sm">{loading ? '--' : totalCalls}</span>
                                     </div>
-                                    <div className="bg-gray-50 border border-green-200 p-3 rounded-lg flex flex-col items-start min-w-[70px]">
-                                        <span className="text-green-600 text-[9px] font-bold tracking-widest uppercase mb-1">SUCCESS</span>
-                                        <span className="text-green-600 font-bold text-sm">{loading ? '--' : successCalls}</span>
-                                    </div>
-                                    <div className="bg-gray-50 border border-red-200 p-3 rounded-lg flex flex-col items-start min-w-[70px]">
+                                    <div className="bg-gray-50 border border-red-200 p-3 rounded-lg flex flex-col items-start w-full">
                                         <span className="text-red-500 text-[9px] font-bold tracking-widest uppercase mb-1">FAILED</span>
                                         <span className="text-red-500 font-bold text-sm">
                                             {loading ? '--' : (analytics?.failed_calls ?? contacts.filter(c => c.status === 'failed' || c.status === 'no_answer').length)}
                                         </span>
                                     </div>
-                                    <div className="bg-gray-50 border border-gray-200 p-3 rounded-lg flex flex-col items-start min-w-[70px]">
+                                    <div className="bg-gray-50 border border-gray-200 p-3 rounded-lg flex flex-col items-start w-full">
                                         <span className="text-gray-500 text-[9px] font-bold tracking-widest uppercase mb-1">CONTACTED</span>
                                         <span className="text-gray-900 font-bold text-sm">{loading ? '--' : ((analytics?.success_calls || 0) + (analytics?.failed_calls || 0)) > 0 ? ((analytics?.success_calls || 0) + (analytics?.failed_calls || 0)) : totalCalls}</span>
                                     </div>
@@ -467,48 +508,31 @@ export function Dashboard() {
                         <div className="flex items-center gap-6 mb-8 mt-2">
                             <span className="text-[10px] text-gray-500 font-medium">Peak hour <span className="bg-gray-100 px-1.5 py-0.5 rounded text-gray-700 ml-1">{peakHourStr}</span> <span className="ml-1 text-gray-900 font-bold">{loading ? '-' : peakHourCount} calls</span></span>
                             <div className="flex items-center gap-4 ml-auto">
-                                <div className="flex items-center gap-1.5"><div className="w-3 h-0.5 bg-green-500"></div><span className="text-xs text-gray-500 font-bold">Outbound <span className="text-gray-900">({analytics?.today_activity?.outbound || 0})</span></span></div>
-                                <div className="flex items-center gap-1.5"><div className="w-3 h-0.5 bg-blue-500"></div><span className="text-xs text-gray-500 font-bold">Inbound <span className="text-gray-900">({analytics?.today_activity?.inbound || 0})</span></span></div>
-                                <div className="flex items-center gap-1.5"><div className="w-3 h-0.5 bg-purple-500"></div><span className="text-xs text-gray-500 font-bold">Web <span className="text-gray-900">({analytics?.today_activity?.web || 0})</span></span></div>
+                                <div className="flex items-center gap-1.5"><div className="w-3 h-0.5 bg-green-500"></div><span className="text-xs text-gray-500 font-bold">Outbound <span className="text-gray-900">({analytics?.today_activity?.outbound ?? outboundCount})</span></span></div>
+                                <div className="flex items-center gap-1.5"><div className="w-3 h-0.5 bg-blue-500"></div><span className="text-xs text-gray-500 font-bold">Inbound <span className="text-gray-900">({analytics?.today_activity?.inbound ?? inboundCount})</span></span></div>
+                                <div className="flex items-center gap-1.5"><div className="w-3 h-0.5 bg-purple-500"></div><span className="text-xs text-gray-500 font-bold">Web <span className="text-gray-900">({analytics?.today_activity?.web ?? webCount})</span></span></div>
                             </div>
                         </div>
 
-                        {/* Abstract Chart mapping */}
-                        <div className="flex-1 relative border-l border-b border-gray-200">
-                            {/* Y-axis placeholders */}
-                            <div className="absolute -left-4 bottom-0 text-[9px] text-gray-400">0</div>
-                            <div className="absolute -left-4 top-[50%] -translate-y-1/2 text-[9px] text-gray-400">{Math.round(maxPerHour / 2)}</div>
-                            <div className="absolute -left-4 top-0 text-[9px] text-gray-400">{maxPerHour}</div>
-
-                            {/* X-axis placeholders */}
-                            <div className="absolute -bottom-5 left-0 text-[9px] text-gray-400">00:00</div>
-                            <div className="absolute -bottom-5 left-1/4 -translate-x-1/2 text-[9px] text-gray-400">06:00</div>
-                            <div className="absolute -bottom-5 left-2/4 -translate-x-1/2 text-[9px] text-gray-400">12:00</div>
-                            <div className="absolute -bottom-5 left-3/4 -translate-x-1/2 text-[9px] text-gray-400">18:00</div>
-                            <div className="absolute -bottom-5 right-0 text-[9px] text-gray-400">23:59</div>
-
-                            {/* Live Active Data Graph! */}
-                            <svg className="absolute w-full h-full inset-0 overflow-visible" preserveAspectRatio="none" viewBox="0 0 100 100">
-                                {/* Gradient Fill Masking Underneath Chart */}
-                                <defs>
-                                    <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.2" />
-                                        <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
-                                    </linearGradient>
-                                </defs>
-                                <polygon points={`0,100 ${points} 100,100`} fill="url(#chartGradient)" />
-                                <polyline points={points} fill="none" stroke="#22c55e" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-
-                                {/* Dynamically pulse the last node if active locally */}
-                                {todayContacts.length > 0 && hourlyCounts[23] > 0 && (
-                                    <circle cx="100" cy={100 - ((hourlyCounts[23] / maxPerHour) * 80)} r="2" fill="#22c55e" className="animate-pulse shadow-sm" />
-                                )}
-                            </svg>
-
-                            {/* Empty baseline placeholder only seen if zero active mapping bounds */}
-                            {todayContacts.length === 0 && (
-                                <div className="absolute bottom-0 left-0 w-full h-[1.5px] bg-gray-200 opacity-50 border-dashed border-b border-gray-300"></div>
-                            )}
+                        {/* Interactive Recharts Activity Bar Chart */}
+                        <div className="flex-1 w-full h-[180px] min-h-[160px] pb-2 mt-4 relative">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={activityChartData} margin={{ top: 5, right: 0, left: -25, bottom: 0 }}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                                    <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9ca3af', fontWeight: 600 }} dy={8} interval="preserveStartEnd" minTickGap={20} />
+                                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9ca3af', fontWeight: 600 }} allowDecimals={false} />
+                                    <Tooltip
+                                        cursor={{ fill: '#f9fafb' }}
+                                        contentStyle={{ borderRadius: '12px', border: '1px solid #f3f4f6', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1)', fontWeight: 'bold', fontSize: '13px' }}
+                                        itemStyle={{ color: '#22c55e' }}
+                                    />
+                                    <Bar dataKey="calls" name="Total Calls" fill="#22c55e" radius={[4, 4, 0, 0]} animationDuration={1200} maxBarSize={16}>
+                                        {activityChartData.map((entry: any, index: number) => (
+                                            <Cell key={`cell-${index}`} fill={index === new Date().getHours() ? '#16a34a' : '#86efac'} />
+                                        ))}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
                         </div>
 
                         {/* Chart Bottom Labels */}

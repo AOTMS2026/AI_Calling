@@ -6,7 +6,9 @@ import toast from 'react-hot-toast';
 
 export function PhoneNumbers() {
     const [numbers, setNumbers] = useState<any[]>([]);
+    const [myNumbers, setMyNumbers] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadingMy, setLoadingMy] = useState(true);
     const [purchasing, setPurchasing] = useState<string | null>(null);
 
     const fetchNumbers = async () => {
@@ -18,6 +20,18 @@ export function PhoneNumbers() {
             toast.error("Failed to fetch Indian phone numbers.");
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchMyNumbers = async () => {
+        setLoadingMy(true);
+        try {
+            const response = await apiClient.get('/api/ravan/phone-numbers/my');
+            setMyNumbers(response.data.data || []);
+        } catch (error) {
+            console.error(error);
+        } finally {
+            setLoadingMy(false);
         }
     };
 
@@ -35,6 +49,7 @@ export function PhoneNumbers() {
             toast.success(`Successfully acquired ${phone}!`);
             // Refresh list after purchasing to pull it off the available list securely
             fetchNumbers();
+            fetchMyNumbers();
         } catch (error) {
             console.error(error);
             toast.error(`Failed to buy number ${phone}.`);
@@ -45,6 +60,7 @@ export function PhoneNumbers() {
 
     useEffect(() => {
         fetchNumbers();
+        fetchMyNumbers();
     }, []);
 
     return (
@@ -63,6 +79,49 @@ export function PhoneNumbers() {
                         {loading ? <Loader2 size={16} className="animate-spin text-gray-400" /> : <RefreshCw size={16} className="text-gray-400 group-hover:rotate-180 transition-transform duration-500" />}
                         Refresh List
                     </button>
+                </div>
+
+                {/* My Numbers Section */}
+                <div className="w-full mb-10">
+                    <h2 className="text-xl font-bold text-gray-900 mb-4 tracking-tight flex items-center gap-2">
+                        <Phone size={20} className="text-blue-500" /> My Active Numbers
+                    </h2>
+                    <div className="w-full bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden">
+                        {loadingMy ? (
+                            <div className="flex justify-center p-12 text-gray-400">
+                                <Loader2 size={24} className="animate-spin text-blue-500" />
+                            </div>
+                        ) : myNumbers.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center p-12 text-gray-400">
+                                <p className="text-sm font-semibold">You have not purchased any phonenumber.</p>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-5">
+                                {myNumbers.map((num, i) => (
+                                    <div key={i} className="flex flex-col p-5 bg-gradient-to-br from-blue-50 to-white border border-blue-100 rounded-2xl shadow-sm">
+                                        <div className="flex items-center gap-3 mb-2">
+                                            <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
+                                                <Phone size={16} />
+                                            </div>
+                                            <div>
+                                                <h3 className="text-[17px] font-black text-gray-900">{num.phone_number}</h3>
+                                                <span className={`text-[10px] font-extrabold uppercase tracking-widest px-2 py-0.5 rounded-full ${num.status === 'Activate' ? 'bg-emerald-50 text-emerald-600' :
+                                                        num.status === 'Pending' ? 'bg-amber-50 text-amber-600' :
+                                                            'bg-red-50 text-red-600'
+                                                    }`}>
+                                                    {num.status === 'Activate' ? 'Active' : num.status}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div className="mt-3 pt-3 border-t border-blue-50/50 flex justify-between text-[11px] font-bold text-gray-500">
+                                            <span>Price: <span className="text-gray-900">${num.price}</span></span>
+                                            <span>Purchased: {new Date(num.created_at).toLocaleDateString()}</span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 <div className="w-full bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden">

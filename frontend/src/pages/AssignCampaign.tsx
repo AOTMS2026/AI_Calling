@@ -214,7 +214,7 @@ export function AssignCampaign() {
                                     >
                                         <option value="" disabled className="text-gray-400">-- Choose target client --</option>
                                         {users.filter(u => u.role !== 'admin').map((u) => (
-                                            <option key={u.id} value={u.id}>{u.name} (UUID: {u.identity_hash ? u.identity_hash.substring(0, 8) : 'Pending'})</option>
+                                            <option key={u.id} value={u.id}>{u.name} (UUID: {u.ravan_agent_id ? u.ravan_agent_id.substring(0, 8) : 'Pending'})</option>
                                         ))}
                                     </select>
                                 </div>

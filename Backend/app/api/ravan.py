@@ -1,10 +1,18 @@
 import os
 import httpx
-from fastapi import APIRouter, HTTPException, Depends
+import json
+from fastapi import APIRouter, Request, HTTPException, BackgroundTasks, Depends
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from app.core.config import settings
 from dotenv import load_dotenv
+from sqlmodel import Session, select
+from app.database.connection import get_session, engine
+from app.models.domain import User, PurchasedPhoneNumber, DashboardMetrics, InboundCampaign, Assign_Agents, CallRecord, Assign_Campaigns
+from app.api.dependencies import get_current_user
+from datetime import datetime
+import urllib.parse
+import asyncio
 
 router = APIRouter(prefix="/api/ravan", tags=["ravan"])
 
@@ -86,6 +94,13 @@ async def list_ravan_tools(
     if not api_key:
         raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
 
+    from app.core.redis_client import get_cache, set_cache, generate_cache_key
+    cache_key = generate_cache_key("tools_list", limit=limit, offset=offset, agent_id=agent_id)
+    cached = await get_cache(cache_key)
+    if cached:
+        print("⚡ REDIS CACHE HIT: Bypassed Ravan.ai - Extracted tools array natively in <1ms!")
+        return cached
+
     url = "https://api.ravan.ai/api/v1/tools/"
     params = {
         "limit": limit,
@@ -106,60 +121,22 @@ async def list_ravan_tools(
         try:
             response = await client.get(url, params=params, headers=headers)
             if response.status_code == 200:
-                return response.json()
+                data = response.json()
+                await set_cache(cache_key, data, 600)
+                return data
             else:
                 print(f"Ravan Tools List Error ({response.status_code}):", response.text)
                 raise HTTPException(status_code=response.status_code, detail=f"Failed to fetch tools list: {response.text}")
         except httpx.RequestError as e:
             raise HTTPException(status_code=500, detail=f"Network error fetching tools list from Ravan: {str(e)}")
 
-@router.get("/phone-numbers/available-numbers/{iso_country}")
-async def get_available_numbers(
-    iso_country: str,
-    page_size: int = 10,
-    region: str = None
-):
+@router.post("/tools")
+async def create_ravan_tool(payload: dict):
     api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
     if not api_key:
         raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
 
-    url = f"https://api.ravan.ai/api/v1/phone-numbers/available-numbers/{iso_country}/"
-    params = {
-        "page_size": page_size
-    }
-    if region:
-        params["region"] = region
-
-    headers = {
-        "X-Api-Key": api_key,
-        "Accept": "application/json"
-    }
-
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(url, params=params, headers=headers)
-            if response.status_code == 200:
-                return response.json()
-            else:
-                print(f"Ravan Phone Numbers Error ({response.status_code}):", response.text)
-                raise HTTPException(status_code=response.status_code, detail=f"Failed to fetch phone numbers: {response.text}")
-        except httpx.RequestError as e:
-            raise HTTPException(status_code=500, detail=f"Network error fetching phone numbers from Ravan: {str(e)}")
-
-
-class BuyNumberRequest(BaseModel):
-    phone_number: str
-    price: float
-    per_minute_price_inbound: float
-    per_minute_price_outbound: float
-
-@router.post("/phone-numbers/buy")
-async def buy_phone_number(payload: BuyNumberRequest):
-    api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
-    if not api_key:
-        raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
-
-    url = "https://api.ravan.ai/api/v1/phone-numbers/buy/"
+    url = "https://api.ravan.ai/api/v1/tools/"
     
     headers = {
         "X-Api-Key": api_key,
@@ -169,18 +146,254 @@ async def buy_phone_number(payload: BuyNumberRequest):
 
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.post(url, json=payload.model_dump(), headers=headers)
-            if response.status_code == 200:
+            response = await client.post(url, json=payload, headers=headers)
+            if response.status_code in (200, 201):
+                from app.core.redis_client import delete_cache
+                await delete_cache("tools_list")
                 return response.json()
             else:
-                print(f"Ravan Buy Number Error ({response.status_code}):", response.text)
-                raise HTTPException(status_code=response.status_code, detail=f"Failed to buy phone number: {response.text}")
+                print(f"Ravan Tool Create Error ({response.status_code}):", response.text)
+                raise HTTPException(status_code=response.status_code, detail=f"Failed to create tool. Server responded: {response.text}")
         except httpx.RequestError as e:
-            raise HTTPException(status_code=500, detail=f"Network error buying phone number from Ravan: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Network error creating tool in Ravan: {str(e)}")
 
+@router.post("/calcom/appointments/manage")
+async def manage_calcom_setup(payload: dict):
+    api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
+    if not api_key:
+        raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
+
+    url = "https://api.ravan.ai/api/v1/calcom/appointments/manage"
+    
+    headers = {
+        "X-Api-Key": api_key,
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(url, json=payload, headers=headers)
+            if response.status_code in (200, 201):
+                return response.json()
+            else:
+                print(f"Ravan Calcom Manage Error ({response.status_code}):", response.text)
+                raise HTTPException(status_code=response.status_code, detail=f"Failed to configure Cal.com schedule structure. Server responded: {response.text}")
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=500, detail=f"Network error managing Cal.com setup in Ravan: {str(e)}")
+
+@router.delete("/tools/{tool_id}")
+async def delete_ravan_tool(tool_id: str):
+    api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
+    if not api_key:
+        raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
+
+    url = f"https://api.ravan.ai/api/v1/tools/{tool_id}"
+    
+    headers = {
+        "X-Api-Key": api_key,
+        "Accept": "application/json"
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.delete(url, headers=headers)
+            if response.status_code in (200, 201, 204):
+                from app.core.redis_client import delete_cache
+                await delete_cache("tools_list")
+                return {"success": True}
+            else:
+                print(f"Ravan Tool Delete Error ({response.status_code}):", response.text)
+                raise HTTPException(status_code=response.status_code, detail=f"Failed to delete tool: {response.text}")
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=500, detail=f"Network error deleting tool in Ravan: {str(e)}")
+
+@router.patch("/tools/{tool_id}")
+async def update_ravan_tool(tool_id: str, payload: dict):
+    api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
+    if not api_key:
+        raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
+
+    url = f"https://api.ravan.ai/api/v1/tools/{tool_id}"
+    
+    headers = {
+        "X-Api-Key": api_key,
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.patch(url, json=payload, headers=headers)
+            if response.status_code in (200, 201):
+                from app.core.redis_client import delete_cache
+                await delete_cache("tools_list")
+                return response.json()
+            else:
+                print(f"Ravan Tool Update Error ({response.status_code}):", response.text)
+                raise HTTPException(status_code=response.status_code, detail=f"Failed to update tool: {response.text}")
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=500, detail=f"Network error updating tool in Ravan: {str(e)}")
+
+@router.get("/phone-numbers/available-numbers/{iso_country}")
+async def get_available_numbers(
+    iso_country: str,
+    page_size: int = 10,
+    region: str = None
+):
+    exact_numbers = [
+        "+918035463568",
+        "+918035762861",
+        "+918035089381",
+        "+918035410079",
+        "+918035463463",
+        "+918035614034",
+        "+918035410288",
+        "+918035614000",
+        "+918035410066",
+        "+918035614241",
+        "+918035089380",
+        "+918035089277",
+        "+918035089415",
+        "+918035396826",
+        "+918035614209",
+        "+918035614033",
+        "+918035396349",
+        "+918035462838",
+        "+918035410441",
+        "+918035762796"
+    ]
+    
+    mock_numbers = []
+    for mobile in exact_numbers:
+        mock_numbers.append({
+            "phoneNumber": mobile,
+            "isoCountry": iso_country,
+            "price": "295.00",
+            "perMinutePriceInbound": 0.6,
+            "perMinutePriceOutbound": 0.6,
+            "telephonyType": "india"
+        })
+    
+    return {
+        "success": True,
+        "message": "Available numbers locally mocked successfully",
+        "data": mock_numbers
+    }
+
+
+class BuyNumberRequest(BaseModel):
+    phone_number: str
+    price: float
+    per_minute_price_inbound: float
+    per_minute_price_outbound: float
+
+@router.post("/phone-numbers/buy")
+async def buy_phone_number(
+    payload: BuyNumberRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
+    # Mocking successful buy operation without calling Ravan API
+    new_number = PurchasedPhoneNumber(
+        user_id=current_user.id,
+        phone_number=payload.phone_number,
+        price=payload.price,
+        per_minute_price_inbound=payload.per_minute_price_inbound,
+        per_minute_price_outbound=payload.per_minute_price_outbound,
+        status="Pending"
+    )
+    db.add(new_number)
+    db.commit()
+    db.refresh(new_number)
+    
+    return {
+        "success": True, 
+        "message": f"Successfully purchased {payload.phone_number} locally",
+        "data": {
+            "id": new_number.id,
+            "phoneNumber": payload.phone_number,
+            "status": "Pending"
+        }
+    }
+
+class UpdateStatusModel(BaseModel):
+    status: str
+
+@router.patch("/phone-numbers/{number_id}/status")
+async def update_phone_number_status(
+    number_id: int,
+    payload: UpdateStatusModel,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Forbidden: Admin access required.")
+        
+    number = db.get(PurchasedPhoneNumber, number_id)
+    if not number:
+        raise HTTPException(status_code=404, detail="Phone number not found.")
+        
+    number.status = payload.status
+    db.commit()
+    db.refresh(number)
+    
+    return {"success": True, "message": "Status updated successfully", "data": {"id": number.id, "status": number.status}}
+
+@router.get("/phone-numbers/my")
+async def get_my_phone_numbers(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
+    # Fetch user's own numbers
+    numbers = db.exec(select(PurchasedPhoneNumber).where(PurchasedPhoneNumber.user_id == current_user.id)).all()
+    
+    # If customer and has no standalone numbers, fallback to the Admin's global pool so their Caller ID dropdown is populated
+    if not numbers and current_user.role != 'admin':
+        admin_users = db.exec(select(User).where(User.role == 'admin')).all()
+        admin_ids = [u.id for u in admin_users]
+        if admin_ids:
+            numbers = db.exec(select(PurchasedPhoneNumber).where(PurchasedPhoneNumber.user_id.in_(admin_ids))).all()
+            
+    # Ultimate safeguard for broken databases where an orphaned number exists but no admin controls it
+    if not numbers:
+        numbers = db.exec(select(PurchasedPhoneNumber)).all()
+            
+    return {"success": True, "data": numbers}
+
+@router.get("/phone-numbers/all")
+async def get_all_phone_numbers(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Forbidden")
+        
+    purchased = db.exec(select(PurchasedPhoneNumber)).all()
+    
+    data = []
+    for pn in purchased:
+        u = db.get(User, pn.user_id) if pn.user_id else None
+        data.append({
+            "id": pn.id,
+            "phone_number": pn.phone_number,
+            "price": pn.price,
+            "status": pn.status,
+            "created_at": pn.created_at,
+            "user_name": u.name if u else "Deleted/System User",
+            "user_email": u.email if u else "N/A"
+        })
+        
+    return {"success": True, "data": data}
+
+
+from app.api.dependencies import get_current_user
+from sqlmodel import Session, select
+from app.database.connection import get_session
+from app.models.domain import User, Assign_Campaigns
 
 @router.get("/campaigns")
-async def get_outbound_campaigns(limit: int = 100, offset: int = 0):
+async def get_outbound_campaigns(limit: int = 100, offset: int = 0, current_user: User = Depends(get_current_user), db: Session = Depends(get_session)):
     api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
     if not api_key:
         raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
@@ -215,8 +428,22 @@ async def get_outbound_campaigns(limit: int = 100, offset: int = 0):
             response = await client.get(url, params=params, headers=headers)
             if response.status_code == 200:
                 data = response.json()
-                if data.get("data") and len(data.get("data", [])) > 0:
+                raw_campaigns = data.get("data", [])
+                
+                # Multi-Tenant Mapping Pipeline (Aligns directly with Assign_Campaigns mirroring Agents logic!)
+                if current_user.role != 'admin':
+                    assigned = db.exec(select(Assign_Campaigns.campaign_id).where(Assign_Campaigns.user_id == current_user.id)).all()
+                    
+                    # Also include any direct legacy fallback mapping strictly for cross-compatibility
+                    allowed_ids = set(assigned)
+                    if current_user.ravan_campaign_id:
+                        allowed_ids.add(current_user.ravan_campaign_id)
+                        
+                    filtered = [c for c in raw_campaigns if c.get("id") in allowed_ids]
+                    return {"success": True, "data": filtered}
+                else:
                     return data
+
             
             # If everything completely fails and no fallback worked
             print(f"Ravan Campaigns Fetch Error ({response.status_code}):", response.text)
@@ -267,11 +494,14 @@ async def proxy_create_call_session(payload: dict):
                 error_body = res.text
                 print("Ravan API Execution Block Failure:", error_body)
                 raise HTTPException(status_code=res.status_code, detail=f"Proxy blocked mapping sandbox web_call. Ravan rejected payload with code {res.status_code}: {error_body}")
+            
+            from app.core.redis_client import delete_cache
+            await delete_cache("call_sessions")
+
             return res.json()
         except httpx.RequestError as e:
             raise HTTPException(status_code=500, detail=f"Network bridge timeout mapping websocket token request block: {str(e)}")
 
-import asyncio
 @router.get("/campaigns/{campaign_id}/cost-aggregation")
 async def get_campaign_total_cost(campaign_id: str):
     """
@@ -440,16 +670,24 @@ async def get_campaign_analytics(campaign_id: str):
         except httpx.RequestError as e:
             raise HTTPException(status_code=500, detail=f"Network bridge broken tracking campaign metrics: {str(e)}")
 
-
-
-
-
 @router.delete("/campaigns/{campaign_id}")
-async def delete_campaign(campaign_id: str):
+async def delete_campaign(campaign_id: str, db: Session = Depends(get_session)):
     api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
     if not api_key:
         raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
 
+    # 1. Clean up from local database first: Assign_Campaigns table
+    try:
+        from app.models.domain import Assign_Campaigns
+        from sqlmodel import select
+        assignments = db.exec(select(Assign_Campaigns).where(Assign_Campaigns.campaign_id == campaign_id)).all()
+        for assignment in assignments:
+            db.delete(assignment)
+        db.commit()
+    except Exception as db_err:
+        print("[Delete Campaign DB Cleanup Error]:", str(db_err))
+
+    # 2. Delete from Ravan.ai API
     url = f"https://api.ravan.ai/api/v1/campaigns/{campaign_id}"
     headers = {
         "X-Api-Key": api_key,
@@ -459,9 +697,11 @@ async def delete_campaign(campaign_id: str):
     async with httpx.AsyncClient() as client:
         try:
             response = await client.delete(url, headers=headers)
-            if response.status_code == 200:
-                return response.json()
+            if response.status_code in [200, 204]:
+                return {"success": True, "message": "Campaign deleted successfully from both database and Ravan."}
             else:
+                if response.status_code == 404:
+                    return {"success": True, "message": "Campaign record deleted locally (not found on Ravan)."}
                 print(f"Ravan Campaign Delete Error ({response.status_code}):", response.text)
                 raise HTTPException(status_code=response.status_code, detail=f"Failed to delete campaign: {response.text}")
         except httpx.RequestError as e:
@@ -493,46 +733,105 @@ async def get_campaign_contacts(campaign_id: str, limit: int = 500, offset: int 
         except httpx.RequestError as e:
             raise HTTPException(status_code=500, detail=f"Network error fetching campaign contacts from Ravan: {str(e)}")
 
-import urllib.parse
-
 @router.get("/contacts")
-async def get_global_contacts(limit: int = 5000, offset: int = 0, search: Optional[str] = None, campaign_id: Optional[str] = None):
+async def get_global_contacts(
+    limit: int = 5000, 
+    offset: int = 0, 
+    search: Optional[str] = None, 
+    campaign_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
     api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
     if not api_key:
         raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
 
-    # Force fresh read of .env to ensure live override
-    from dotenv import load_dotenv
-    load_dotenv(override=True)
-    env_campaign_id = campaign_id or os.environ.get("CAMPAIGN_ID") or os.environ.get("CAMPAIGNS")
-
-    base_url = f"https://api.ravan.ai/api/v1/campaigns/{env_campaign_id}/contacts" if env_campaign_id else "https://api.ravan.ai/api/v1/contacts"
-    url = f"{base_url}?limit={limit}&offset={offset}"
+    from app.core.redis_client import get_cache, set_cache, generate_cache_key
     
-    if search:
-        safe_search = urllib.parse.quote(search)
-        url += f"&search={safe_search}"
+    # Isolate cache stringently by User explicitly preventing tenant leakage
+    cache_key = generate_cache_key("contacts", user_id=current_user.id, limit=limit, offset=offset, search=search, campaign_id=campaign_id)
+    cached_data = await get_cache(cache_key)
+    if cached_data:
+        return cached_data
         
-    params = {}
+    import asyncio
+    assigned_campaigns = []
     
+    if current_user.role == 'admin':
+        from dotenv import load_dotenv
+        load_dotenv(override=True)
+        env_campaign_id = campaign_id or os.environ.get("CAMPAIGN_ID") or os.environ.get("CAMPAIGNS")
+        if env_campaign_id:
+            assigned_campaigns.append(env_campaign_id)
+    else:
+        # Non-admins get strictly physical POSTGRESQL mapped Assigned Campaigns!
+        from sqlmodel import select
+        from app.models.domain import Assign_Campaigns
+        records = db.exec(select(Assign_Campaigns.campaign_id).where(Assign_Campaigns.user_id == current_user.id)).all()
+        if records:
+            assigned_campaigns = list(set(records))
+            
+    # Include an explicitly mapped param if explicitly provided by a valid user flow
+    if campaign_id and campaign_id not in assigned_campaigns:
+        assigned_campaigns.append(campaign_id)
+
+    if not assigned_campaigns:
+        return {"success": True, "data": []}
+
     headers = {
         "X-Api-Key": api_key,
         "Accept": "application/json"
     }
 
-    async with httpx.AsyncClient() as client:
+    async def fetch_campaign_contacts(client, cid):
+        url = f"https://api.ravan.ai/api/v1/campaigns/{cid}/contacts?limit={limit}&offset={offset}"
+        if search:
+            url += f"&search={urllib.parse.quote(search)}"
         try:
-            response = await client.get(url, params=params, headers=headers)
-            if response.status_code == 200:
-                return response.json()
-            else:
-                print(f"Ravan Global Contacts Fetch Error ({response.status_code}):", response.text)
-                raise HTTPException(status_code=response.status_code, detail=f"Failed to fetch global contacts: {response.text}")
-        except httpx.RequestError as e:
-            raise HTTPException(status_code=500, detail=f"Network error fetching global contacts from Ravan: {str(e)}")
+            res = await client.get(url, headers=headers)
+            if res.status_code == 200:
+                data = res.json()
+                return data.get("data", [])
+        except Exception:
+            pass
+        return []
+
+    async with httpx.AsyncClient() as client:
+        tasks = [fetch_campaign_contacts(client, c) for c in assigned_campaigns]
+        arrays = await asyncio.gather(*tasks)
+        
+        merged_dict = {}
+        for arr in arrays:
+            for item in arr:
+                key = item.get("id") or item.get("contactId")
+                if key:
+                    merged_dict[key] = item
+                    
+        payload_data = list(merged_dict.values())
+        
+        # Immediate PostgreSQL fallback if Ravan.ai is empty or crashed (as requested!)
+        if not payload_data:
+            from sqlmodel import select
+            from app.models.domain import Contact
+            # Select all contacts natively matching assigned_campaigns
+            local_contacts = db.exec(select(Contact).where(Contact.campaign_id.in_(assigned_campaigns))).all()
+            for lc in local_contacts:
+                payload_data.append({
+                    "id": lc.contact_id or lc.phone,
+                    "name": lc.name or f"{lc.first_name or ''} {lc.last_name or ''}".strip(),
+                    "phone": lc.phone,
+                    "email": lc.email,
+                    "tags": lc.tags.split(",") if lc.tags else [],
+                    "campaignId": lc.campaign_id,
+                    "agentId": lc.agent_id
+                })
+                    
+        payload = {"success": True, "data": payload_data}
+        await set_cache(cache_key, payload, 30) # High-turnover cache 30s
+        return payload
 
 @router.get("/contacts/{contact_id}/detail")
-async def get_contact_detail(contact_id: str):
+async def get_contact_detail(contact_id: str, db: Session = Depends(get_session)):
     api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
     if not api_key:
         raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
@@ -544,6 +843,29 @@ async def get_contact_detail(contact_id: str):
         "Accept": "application/json"
     }
 
+    async def fetch_local_fallback():
+        from sqlmodel import select
+        from app.models.domain import Contact
+        lc = db.exec(select(Contact).where((Contact.contact_id == contact_id) | (Contact.phone == contact_id))).first()
+        if not lc: return None
+        return {
+            "success": True, 
+            "data": {
+                "contact": {
+                    "id": lc.contact_id or lc.phone,
+                    "name": lc.name or f"{lc.first_name or ''} {lc.last_name or ''}".strip(),
+                    "phone": lc.phone,
+                    "email": lc.email,
+                    "tags": lc.tags.split(",") if lc.tags else [],
+                    "campaignId": lc.campaign_id,
+                    "agentId": lc.agent_id
+                },
+                "activities": [],
+                "campaigns": [{"id": lc.campaign_id, "name": "Local Database Native Campaign", "agentId": lc.agent_id}] if lc.campaign_id else [],
+                "recentCalls": []
+            }
+        }
+
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(url, headers=headers)
@@ -551,8 +873,12 @@ async def get_contact_detail(contact_id: str):
                 return response.json()
             else:
                 print(f"Ravan Contact Detail Error ({response.status_code}):", response.text)
+                fb = await fetch_local_fallback()
+                if fb: return fb
                 raise HTTPException(status_code=response.status_code, detail=f"Failed to fetch contact details: {response.text}")
-        except httpx.RequestError as e:
+        except Exception as e:
+            fb = await fetch_local_fallback()
+            if fb: return fb
             raise HTTPException(status_code=500, detail=f"Network error fetching contact details from Ravan: {str(e)}")
 
 @router.get("/agents")
@@ -571,6 +897,13 @@ async def get_raw_agents():
     if not api_key:
         raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
 
+    from app.core.redis_client import get_cache, set_cache
+    cache_key = "dashboard_raw_agents_pool"
+    cached_data = await get_cache(cache_key)
+    if cached_data:
+        print("⚡ REDIS CACHE HIT: Bypassed Ravan.ai - Extracted pure agents array for dashboard natively in <1ms!")
+        return cached_data
+
     url = "https://api.ravan.ai/api/v1/agents?limit=100"
     headers = {"X-Api-Key": api_key, "Accept": "application/json"}
 
@@ -586,6 +919,8 @@ async def get_raw_agents():
                         filtered = [a for a in data["data"] if a.get("id") in valid_env_agent_ids]
                         data["data"] = filtered
                         data["meta"] = {"total": len(filtered)}
+                
+                await set_cache(cache_key, data, 600)
                 return data
             return {"success": True, "data": [], "meta": {"total": 0}}
         except Exception as e:
@@ -665,6 +1000,8 @@ async def bulk_delete_contacts(req: BulkDeleteModel):
         try:
             response = await client.post(url, json={"ids": req.ids}, headers=headers)
             if response.status_code == 200:
+                from app.core.redis_client import delete_cache
+                await delete_cache("contacts")
                 return response.json()
             else:
                 print(f"Ravan Bulk Delete Error ({response.status_code}):", response.text)
@@ -731,12 +1068,43 @@ async def update_contact(contact_id: str, payload: UpdateContactRequest):
             clean_payload = {k: v for k, v in payload.model_dump().items() if v is not None}
             response = await client.patch(url, headers=headers, json=clean_payload)
             if response.status_code == 200:
+                from app.core.redis_client import delete_cache
+                await delete_cache("contacts")
                 return response.json()
             else:
                 print(f"Ravan Contact Update Error ({response.status_code}):", response.text)
                 raise HTTPException(status_code=response.status_code, detail=f"Failed to update contact: {response.text}")
         except httpx.RequestError as e:
             raise HTTPException(status_code=500, detail=f"Network error updating contact: {str(e)}")
+
+@router.delete("/contacts/{contact_id}")
+async def delete_contact(contact_id: str):
+    """
+    Physically maps a native explicit contact deletion against Ravan AI.
+    """
+    api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
+    if not api_key:
+        raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
+
+    url = f"https://api.ravan.ai/api/v1/contacts/{contact_id}"
+    
+    headers = {
+        "X-Api-Key": api_key,
+        "Accept": "application/json"
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.delete(url, headers=headers)
+            if response.status_code in [200, 201, 204]:
+                from app.core.redis_client import delete_cache
+                await delete_cache("contacts")
+                return {"success": True, "message": "Contact dynamically deleted."}
+            else:
+                print(f"Ravan Contact Delete Error ({response.status_code}):", response.text)
+                raise HTTPException(status_code=response.status_code, detail=f"Failed to delete contact: {response.text}")
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=500, detail=f"Network error deleting contact: {str(e)}")
 
 class CreateContactModel(BaseModel):
     name: Optional[str] = None
@@ -749,9 +1117,11 @@ class CreateContactModel(BaseModel):
     metadata: Optional[dict] = {}
     customVariables: Optional[dict] = {}
     tags: Optional[List[str]] = []
+    agentId: Optional[str] = None
+    campaignId: Optional[str] = None
 
 @router.post("/contacts/")
-async def create_contact(req: CreateContactModel):
+async def create_contact(req: CreateContactModel, db: Session = Depends(get_session)):
     api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
     if not api_key:
         raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
@@ -760,32 +1130,80 @@ async def create_contact(req: CreateContactModel):
     headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
 
     payload = {k: v for k, v in req.dict(exclude_none=True).items() if v != ""}
+    # Safely strip agentId from Ravan payload as it's meant strictly for our local DB schema tracking!
+    payload.pop("agentId", None)
+    payload.pop("campaignId", None)
 
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(url, headers=headers, json=payload)
             if response.status_code == 200:
                 data = response.json()
-                
-                # Instantly extract mapped active environment campaign id for seamless binding
                 from dotenv import load_dotenv
                 load_dotenv(override=True)
-                env_campaign_id = os.environ.get("CAMPAIGN_ID") or os.environ.get("CAMPAIGNS")
                 
-                # If an active campaign exists globally, dynamically physically bind the new contact to it natively
-                if env_campaign_id and data.get("data") and data["data"].get("id"):
-                    try:
-                        new_id = data["data"]["id"]
-                        bind_url = f"https://api.ravan.ai/api/v1/campaigns/{env_campaign_id}/contacts"
-                        await client.post(bind_url, headers=headers, json={"contactIds": [new_id]})
-                    except Exception as bind_err:
-                        print("Warning: Failed to map new contact directly into active campaign:", bind_err)
+                # Dynamic FrontEnd-First Campaign Targeting Injection over Local env
+                env_campaign_id = req.campaignId or os.environ.get("CAMPAIGN_ID") or os.environ.get("CAMPAIGNS")
+                
+                new_id = None
+                if data.get("data") and data["data"].get("id"):
+                    new_id = data["data"]["id"]
+                    if env_campaign_id:
+                        try:
+                            bind_url = f"https://api.ravan.ai/api/v1/campaigns/{env_campaign_id}/contacts"
+                            await client.post(bind_url, headers=headers, json={"contactIds": [new_id]})
+                        except Exception as bind_err:
+                            print("Warning: Failed to map new contact directly into active campaign:", bind_err)
+                            
+                # Safely sync to local Postgres Native DB 
+                try:
+                    from sqlalchemy.dialects.postgresql import insert as pg_insert
+                    stmt = pg_insert(Contact).values([{
+                        "name": req.name,
+                        "phone": req.phone,
+                        "email": req.email,
+                        "contact_id": new_id,
+                        "campaign_id": env_campaign_id,
+                        "agent_id": req.agentId,
+                        "tags": ",".join(req.tags) if req.tags else "Customer"
+                    }]).on_conflict_do_nothing()
+                    db.execute(stmt)
+                    db.commit()
+                except Exception as pg_err:
+                    print("Local Postgres DB Sync fallback failed:", pg_err)
+
+                from app.core.redis_client import delete_cache
+                await delete_cache("contacts")
 
                 return data
             else:
                 raise HTTPException(status_code=response.status_code, detail=response.text)
         except httpx.RequestError as e:
             raise HTTPException(status_code=500, detail=f"Network error creating contact: {str(e)}")
+
+@router.post("/contacts/{contact_id}/call")
+async def trigger_contact_call(contact_id: str, request: Request, current_user: User = Depends(get_current_user)):
+    """Dispatch Outbound Call Trigger wrapping contact dynamically!"""
+    api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
+    payload = await request.json()
+    
+    url = "https://api.ravan.ai/api/v1/calls/outbound"
+    headers = {"X-Api-Key": api_key, "Accept": "application/json", "Content-Type": "application/json"}
+    
+    outbound_structure = {
+        "contactId": contact_id,
+        "campaignId": payload.get("campaignId") or current_user.ravan_campaign_id or None,
+        "agentId": payload.get("agentId") or current_user.ravan_agent_id or None,
+        "fromNumber": payload.get("fromNumber") or "",
+        "toNumber": payload.get("toNumber")
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            res = await client.post(url, headers=headers, json={k: v for k, v in outbound_structure.items() if v})
+            return {"success": True, "provider_status": res.status_code, "data": res.json() if res.status_code == 200 else res.text}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
 class BindContactsRequest(BaseModel):
     contactIds: List[str]
@@ -877,13 +1295,16 @@ class CampaignSchedule(BaseModel):
 class CreateCampaignRequest(BaseModel):
     name: str
     agentId: str
-    phoneNumberId: str
+    phoneNumberId: Optional[str] = None
     fromPhoneNumber: str
     contactIds: Optional[List[str]] = []
     schedule: Optional[CampaignSchedule] = None
 
 @router.post("/campaigns/create")
-async def create_campaign(payload: CreateCampaignRequest):
+async def create_campaign(
+    payload: CreateCampaignRequest,
+    current_user: User = Depends(get_current_user)
+):
     api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
     if not api_key:
         raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
@@ -897,12 +1318,41 @@ async def create_campaign(payload: CreateCampaignRequest):
 
     # Format explicitly removing Nones if Ravan strictly prohibits them
     body = payload.model_dump(exclude_none=True)
+    
+    # Strip faux ID so Ravan falls back natively to 'fromPhoneNumber' exact matching
+    if body.get("phoneNumberId") == "phone-id-placeholder":
+        del body["phoneNumberId"]
+        
+    # Strict Campaign naming cleanly overrides
+    if current_user.role != 'admin':
+        base_name = body.get("name", "Unnamed Campaign").split(" [HASH:")[0]
+        body["name"] = f"{base_name}"
 
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(url, json=body, headers=headers)
             if response.status_code == 200 or response.status_code == 201:
-                return response.json()
+                res_data = response.json()
+                
+                # Assign Campaign automatically to the creator dynamically!
+                camp_id = res_data.get("data", {}).get("id") or res_data.get("id")
+                if camp_id:
+                    with Session(engine) as db:
+                        from app.models.domain import Assign_Campaigns
+                        from sqlmodel import select
+                        
+                        existing = db.exec(select(Assign_Campaigns).where(Assign_Campaigns.campaign_id == camp_id, Assign_Campaigns.user_id == current_user.id)).first()
+                        if not existing:
+                            new_assign = Assign_Campaigns(
+                                campaign_id=camp_id,
+                                agent_id=body.get("agentId"),
+                                user_id=current_user.id,
+                                campaign_name=body.get("name")
+                            )
+                            db.add(new_assign)
+                            db.commit()
+                            
+                return res_data
             else:
                 print(f"Ravan Campaigns Create Error ({response.status_code}):", response.text)
                 raise HTTPException(status_code=response.status_code, detail=f"Failed to create campaign: {response.text}")
@@ -933,37 +1383,317 @@ async def update_campaign(campaign_id: str, payload: dict):
         except httpx.RequestError as e:
             raise HTTPException(status_code=500, detail=f"Network error updating campaign on Ravan: {str(e)}")
 
+async def sync_call_metrics_to_db(agent_id: str):
+    if not agent_id: return
+    try:
+        api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
+        url = "https://api.ravan.ai/api/v1/calling/call-sessions"
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            fetch_params = {"page_size": 5000}
+                
+            resp = await client.get(url, params=fetch_params, headers={"X-Api-Key": api_key, "Accept": "application/json"})
+            if resp.status_code == 200:
+                data = resp.json()
+                s_list = data.get("data", {}).get("callSessions", []) if isinstance(data.get("data"), dict) else data.get("data", [])
+                
+                sessions = []
+                for s in s_list:
+                    if agent_id == "ROOT_DEFAULT":
+                        sessions.append(s)
+                        continue
+                    if s.get("agentId") == agent_id:
+                        sessions.append(s)
 
-@router.get("/contacts")
-async def get_all_contacts(limit: int = 100, offset: int = 0):
-    api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
-    if not api_key:
-        raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
+                with Session(engine) as db:
+                    metric = db.exec(select(DashboardMetrics).where(DashboardMetrics.agent_id == agent_id)).first()
+                    if not metric:
+                        metric = DashboardMetrics(agent_id=agent_id)
+                        db.add(metric)
+                    
+                    total_c = len(sessions)
+                    # Include all terminal success states but securely EXCLUDE blind outbound completions to allow native ML bridging!
+                    succ_c = sum([1 for s in sessions if str(s.get("status") or "").lower() in ["completed", "ended", "success"] and str(s.get("channel") or "").lower() != "outbound-api"])
+                    fail_c = sum([1 for s in sessions if str(s.get("status") or "").lower() in ["failed", "no_answer", "error"]])
+                    raw_cost = sum([float(s.get("costTotal") or 0.0) for s in sessions])
+                    
+                    # Mathematical Success Rate tracking and 4-point precision float rounding for explicit Cost metrics
+                    succ_rate = round((succ_c / total_c * 100), 2) if total_c > 0 else 0.0
+                    
+                    metric.total_duration_sec = sum([int(s.get("durationSec") or 0) for s in sessions])
+                    # Multiply total raw cost by 7rs coefficient natively in database!
+                    metric.total_cost = round((raw_cost * 7.0), 4)
+                    metric.total_calls = total_c
+                    metric.success_calls = succ_c
+                    metric.failed_calls = fail_c
+                    metric.success_rate = succ_rate
+                    metric.last_updated = datetime.utcnow()
+                    
+                    db.commit()
+                    print(f"[METRICS SYNC] agent_id={agent_id[:8]}... total={total_c} success={succ_c} rate={succ_rate}%")
+    except Exception as e:
+        print("Failed Async DB Metrics Sync Trigger:", str(e))
 
-    url = "https://api.ravan.ai/api/v1/contacts/"
-    params = {
-        "limit": limit,
-        "offset": offset
-    }
-    
-    headers = {
-        "X-Api-Key": api_key,
-        "Accept": "application/json"
-    }
+@router.get("/dashboard/metrics")
+async def get_dashboard_metrics_trigger(background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user), db: Session = Depends(get_session)):
+    """
+    Renders PostgreSQL aggregated Dashboard metrics intelligently across unified agent fleets!
+    """
+    try:
+        agent_uuids = [current_user.ravan_agent_id] if current_user.ravan_agent_id else []
+        
+        # 1. Append assigned Agents natively
+        assigned_records = db.exec(select(Assign_Agents.agent_id).where(Assign_Agents.user_id == current_user.id)).all()
+        agent_uuids.extend(assigned_records)
+        
+        # 2. Append Agents utilized natively by explicitly mapped Campaigns
+        assigned_campaigns = db.exec(select(Assign_Campaigns.agent_id).where(Assign_Campaigns.user_id == current_user.id)).all()
+        agent_uuids.extend([c for c in assigned_campaigns if c is not None])
+        
+        target_agent_uuids = set(agent_uuids)
 
-    async with httpx.AsyncClient() as client:
+        if current_user.role == 'admin':
+            # For admin, we should maybe pull everything, but for now fallback to the admin's UUID default
+            target_agent_uuids.add("ROOT_DEFAULT")
+
+        metrics = []
+        for uid in target_agent_uuids:
+            metric = db.exec(select(DashboardMetrics).where(DashboardMetrics.agent_id == uid)).first()
+            if not metric or (datetime.utcnow() - metric.last_updated).total_seconds() > 300:
+                background_tasks.add_task(sync_call_metrics_to_db, uid)
+            if metric:
+                metrics.append(metric)
+
+        if not metrics:
+            return {"data": None}
+
+        # Mathematical pure DB aggregation across all user agents
+        agg = {
+            "total_calls": sum(m.total_calls for m in metrics),
+            "total_cost": round(sum(m.total_cost for m in metrics), 4),
+            "success_calls": sum(m.success_calls for m in metrics),
+            "failed_calls": sum(m.failed_calls for m in metrics),
+            "total_duration_sec": sum(m.total_duration_sec for m in metrics),
+        }
+        
+        # Structurally Extract Genuine Ravan AI Campaign level Outbound Success Metrics
         try:
-            response = await client.get(url, params=params, headers=headers)
-            if response.status_code == 200:
-                return response.json()
+            api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
+            async with httpx.AsyncClient() as client:
+                camp_resp = await client.get("https://api.ravan.ai/api/v1/campaigns/?limit=100", headers={"X-Api-Key": api_key})
+                if camp_resp.status_code == 200:
+                    c_data = camp_resp.json().get("data", [])
+                    mapped_campaigns = db.exec(select(Assign_Campaigns.campaign_id).where(Assign_Campaigns.user_id == current_user.id)).all()
+                    
+                    allowed_c_ids = set(mapped_campaigns)
+                    if current_user.ravan_campaign_id:
+                        allowed_c_ids.add(current_user.ravan_campaign_id)
+                        
+                    for c in c_data:
+                        if current_user.role == 'admin' or c.get("id") in allowed_c_ids:
+                            stats = c.get("contactStats", {})
+                            agg["success_calls"] += stats.get("successful", 0)
+        except Exception as ce:
+            print("Failed to sync true campaign ML stats to Dashboard:", str(ce))
+
+        agg["success_rate"] = round((agg["success_calls"] / agg["total_calls"] * 100), 2) if agg["total_calls"] > 0 else 0.0
+        
+        return {"data": agg}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/all-call-history")
+async def get_all_call_history(
+    request: Request,
+    page: int = 1,
+    page_size: int = 50,
+    status: Optional[str] = None,
+    channel: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    sentiment: Optional[str] = None,
+    disconnect_reason: Optional[str] = None,
+    call_type: Optional[str] = None,
+    caller_name: Optional[str] = None,
+    caller_number: Optional[str] = None,
+    duration_min: Optional[int] = None,
+    duration_max: Optional[int] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
+    """
+    Fetches ALL call history from Ravan.ai with comprehensive filtering.
+    Supports status, channel, agent, sentiment, disconnect reason, call type,
+    caller name, caller number, and duration range filters.
+    Falls back to local PostgreSQL CallRecord table when Ravan is unavailable.
+    """
+    api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
+    url = "https://api.ravan.ai/api/v1/calling/call-sessions"
+
+    params = {"page_size": 2000}
+    if status and status.lower() not in ("all", ""):
+        params["status"] = status
+    if channel and channel.lower() not in ("all", ""):
+        params["channel"] = channel
+
+    # Build target agent UUIDs
+    target_agent_uuids = set()
+    if current_user.role != 'admin':
+        a_uuids = [current_user.ravan_agent_id] if current_user.ravan_agent_id else []
+        assigned_records = db.exec(select(Assign_Agents.agent_id).where(Assign_Agents.user_id == current_user.id)).all()
+        a_uuids.extend(assigned_records)
+        assigned_campaigns = db.exec(select(Assign_Campaigns.agent_id).where(Assign_Campaigns.user_id == current_user.id)).all()
+        a_uuids.extend([c for c in assigned_campaigns if c is not None])
+        target_agent_uuids = set(filter(None, a_uuids))
+
+    def build_local_fallback():
+        q = select(CallRecord)
+        if status and status.lower() not in ("all", ""):
+            q = q.where(CallRecord.status == status)
+        if channel and channel.lower() not in ("all", ""):
+            q = q.where(CallRecord.channel == channel)
+        if agent_id:
+            q = q.where(CallRecord.agent_id == agent_id)
+        if caller_number:
+            q = q.where(
+                (CallRecord.caller_number.contains(caller_number)) |
+                (CallRecord.callee_number.contains(caller_number))
+            )
+        if caller_name:
+            q = q.where(CallRecord.caller_name.contains(caller_name))
+        if disconnect_reason:
+            q = q.where(CallRecord.disconnect_reason == disconnect_reason)
+        if sentiment:
+            q = q.where(CallRecord.sentiment == sentiment)
+        if duration_min is not None:
+            q = q.where(CallRecord.duration_sec >= duration_min)
+        if duration_max is not None:
+            q = q.where(CallRecord.duration_sec <= duration_max)
+
+        local_recs = db.exec(q.order_by(CallRecord.created_at.desc())).all()
+        sessions = []
+        for r in local_recs:
+            sessions.append({
+                "id": r.call_id,
+                "agentId": r.agent_id,
+                "agentName": r.agent_name,
+                "callerNumber": r.caller_number,
+                "calleeNumber": r.callee_number,
+                "callerName": r.caller_name,
+                "channel": r.channel,
+                "status": r.status,
+                "durationSec": r.duration_sec,
+                "costTotal": r.cost,
+                "summary": r.summary,
+                "recordingUrl": r.recording_url,
+                "disconnectReason": r.disconnect_reason,
+                "errorMessage": r.error_message,
+                "sentiment": r.sentiment,
+                "startedAt": str(r.started_at) if r.started_at else None,
+                "endedAt": str(r.ended_at) if r.ended_at else None,
+                "createdAt": str(r.created_at),
+                "metadata": {}
+            })
+        total = len(sessions)
+        start_idx = (page - 1) * page_size
+        paged = sessions[start_idx: start_idx + page_size]
+        return {"data": {"callSessions": paged, "totalCount": total}}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            resp = await client.get(url, params=params, headers={"X-Api-Key": api_key, "Accept": "application/json"})
+            if resp.status_code == 200:
+                data = resp.json()
+                s_list = data.get("data", {}).get("callSessions", []) if isinstance(data.get("data"), dict) else (data.get("calls", []) or data.get("data", []))
+                if isinstance(s_list, dict):
+                    s_list = s_list.get("callSessions", []) or []
+
+                filtered_sessions = []
+                for s in s_list:
+                    s_agent_id = str(s.get("agentId") or s.get("agent_id") or "")
+                    if current_user.role != 'admin' and target_agent_uuids and s_agent_id not in target_agent_uuids:
+                        continue
+
+                    if agent_id and s_agent_id != agent_id:
+                        continue
+                    if status and status.lower() not in ("all", "") and str(s.get("status") or "").lower() != status.lower():
+                        continue
+                    if channel and channel.lower() not in ("all", "") and str(s.get("channel") or "").lower() != channel.lower():
+                        continue
+                    if caller_number:
+                        c1 = str(s.get("callerNumber") or s.get("caller_number") or "")
+                        c2 = str(s.get("calleeNumber") or s.get("callee_number") or "")
+                        if caller_number not in c1 and caller_number not in c2:
+                            continue
+                    if caller_name:
+                        cn = str(s.get("callerName") or s.get("caller_name") or "").lower()
+                        if caller_name.lower() not in cn:
+                            continue
+                    if disconnect_reason:
+                        dr = str(s.get("disconnectReason") or s.get("disconnect_reason") or "").lower()
+                        if disconnect_reason.lower() not in dr:
+                            continue
+                    if sentiment:
+                        sent = str(s.get("sentiment") or s.get("sentiment") or "").lower()
+                        if sentiment.lower() != sent:
+                            continue
+                    if call_type and call_type.lower() not in ("all", ""):
+                        ct = str(s.get("channel") or s.get("channel") or "").lower()
+                        if "transfer" in call_type.lower() and "transfer" not in ct:
+                            continue
+                        if call_type.lower() == "web_call" and "web" not in ct:
+                            continue
+                        if call_type.lower() == "inbound" and "inbound" not in ct:
+                            continue
+                        if call_type.lower() == "outbound" and "outbound" not in ct:
+                            continue
+                    if duration_min is not None:
+                        dur = int(s.get("durationSec") or s.get("duration_sec") or 0)
+                        if dur < duration_min:
+                            continue
+                    if duration_max is not None:
+                        dur = int(s.get("durationSec") or s.get("duration_sec") or 0)
+                        if dur > duration_max:
+                            continue
+
+                    filtered_sessions.append({
+                        "id": s.get("id"),
+                        "agentId": s_agent_id,
+                        "agentName": s.get("agentName") or s.get("agent_name"),
+                        "callerNumber": s.get("callerNumber") or s.get("caller_number"),
+                        "calleeNumber": s.get("calleeNumber") or s.get("callee_number"),
+                        "callerName": s.get("callerName") or s.get("caller_name"),
+                        "channel": s.get("channel"),
+                        "status": s.get("status"),
+                        "durationSec": s.get("durationSec") or s.get("duration_sec"),
+                        "costTotal": float(s.get("costTotal") or s.get("cost_total") or 0.0),
+                        "summary": s.get("summary"),
+                        "recordingUrl": s.get("recordingUrl") or s.get("recording_url"),
+                        "disconnectReason": s.get("disconnectReason") or s.get("disconnect_reason"),
+                        "errorMessage": s.get("errorMessage") or s.get("error_message"),
+                        "sentiment": s.get("sentiment"),
+                        "startedAt": s.get("startedAt") or s.get("started_at"),
+                        "endedAt": s.get("endedAt") or s.get("ended_at"),
+                        "createdAt": s.get("createdAt") or s.get("created_at"),
+                        "metadata": s.get("metadata") or {}
+                    })
+
+                if not filtered_sessions:
+                    return build_local_fallback()
+
+                filtered_sessions.sort(key=lambda x: str(x.get("createdAt") or x.get("startedAt") or ""), reverse=True)
+                start_idx = (page - 1) * page_size
+                end_idx = start_idx + page_size
+                paged_sessions = filtered_sessions[start_idx:end_idx]
+                return {"data": {"callSessions": paged_sessions, "totalCount": len(filtered_sessions)}}
             else:
-                print(f"Ravan Global Contacts Fetch Error ({response.status_code}):", response.text)
-                raise HTTPException(status_code=response.status_code, detail=f"Failed to fetch global contacts: {response.text}")
-        except httpx.RequestError as e:
-            raise HTTPException(status_code=500, detail=f"Network error fetching global contacts from Ravan: {str(e)}")
+                return build_local_fallback()
+        except Exception as e:
+            return build_local_fallback()
+
 
 @router.get("/calling/call-sessions")
 async def list_call_sessions(
+    request: Request,
     page: int = 1,
     page_size: int = 20,
     agent_id: Optional[str] = None,
@@ -976,47 +1706,148 @@ async def list_call_sessions(
     started_after: Optional[str] = None,
     started_before: Optional[str] = None,
     campaign_id: Optional[str] = None,
+    _forceRefresh: Optional[bool] = False,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
 ):
+    """
+    Renders purely off Ravan AI Call Sessions dynamically, using hybrid local filtering
+    so internal logic hashes aren't sent directly to Ravan (which causes 0-length responses).
+    """
     api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
-    if not api_key:
-        raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
-
     url = "https://api.ravan.ai/api/v1/calling/call-sessions"
     
-    # Pack only provided variables native to the request query
-    params = {
-        "page": page,
-        "page_size": page_size
-    }
-    if agent_id: params["agent_id"] = agent_id
-    if campaign_id: params["campaign_id"] = campaign_id
-    if status: params["status"] = status
-    if channel: params["channel"] = channel
-    if caller_number: params["caller_number"] = caller_number
-    if search: params["search"] = search
-    if sort_by: params["sort_by"] = sort_by
-    if sort_order: params["sort_order"] = sort_order
-    if started_after: params["started_after"] = started_after
-    if started_before: params["started_before"] = started_before
+    # We fetch enough records from Ravan to apply local filtering safely
+    params = {"page_size": 2000}
+    if status and status.lower() != "all":
+        params["status"] = status
+    if channel and channel.lower() != "all":
+        params["channel"] = channel
+    if search:
+        params["search"] = search
+        
+    # Build target agent UUIDs BEFORE any network calls
+    target_agent_uuids = set()
+    if current_user.role != 'admin':
+        agent_uuids = [current_user.ravan_agent_id] if current_user.ravan_agent_id else []
+        assigned_records = db.exec(select(Assign_Agents.agent_id).where(Assign_Agents.user_id == current_user.id)).all()
+        agent_uuids.extend(assigned_records)
+        from app.models.domain import Assign_Campaigns
+        assigned_campaigns = db.exec(select(Assign_Campaigns.agent_id).where(Assign_Campaigns.user_id == current_user.id)).all()
+        agent_uuids.extend([c for c in assigned_campaigns if c is not None])
+        target_agent_uuids = set(filter(None, agent_uuids))
+        print(f"[CallSessions] User {current_user.email} → target_agent_uuids: {target_agent_uuids}")
 
-    headers = {
-        "X-Api-Key": api_key,
-        "Accept": "application/json"
-    }
+    def build_local_fallback():
+        """Serve calls from local PostgreSQL CallRecord when Ravan is unavailable."""
+        q = select(CallRecord)
+        if target_agent_uuids:
+            q = q.where(CallRecord.agent_id.in_(target_agent_uuids))
+        if status and status.lower() != "all":
+            q = q.where(CallRecord.status == status)
+        if caller_number:
+            q = q.where((CallRecord.caller_number.contains(caller_number)) | (CallRecord.callee_number.contains(caller_number)))
+        local_recs = db.exec(q.order_by(CallRecord.created_at.desc())).all()
+        sessions = []
+        for r in local_recs:
+            sessions.append({
+                "id": r.call_id,
+                "agentId": r.agent_id,
+                "agentName": r.agent_name,
+                "callerNumber": r.caller_number,
+                "calleeNumber": r.callee_number,
+                "callerName": r.caller_name,
+                "channel": r.channel,
+                "status": r.status,
+                "durationSec": r.duration_sec,
+                "costTotal": r.cost,
+                "summary": r.summary,
+                "recordingUrl": r.recording_url,
+                "disconnectReason": r.disconnect_reason,
+                "errorMessage": r.error_message,
+                "startedAt": str(r.started_at) if r.started_at else None,
+                "endedAt": str(r.ended_at) if r.ended_at else None,
+                "createdAt": str(r.created_at),
+                "metadata": {}
+            })
+        total = len(sessions)
+        start_idx = (page - 1) * page_size
+        paged = sessions[start_idx: start_idx + page_size]
+        print(f"[CallSessions] Local PostgreSQL fallback served {len(paged)} of {total} records.")
+        return {"data": {"callSessions": paged, "totalCount": total}}
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=30.0) as client:
         try:
-            response = await client.get(url, params=params, headers=headers)
-            if response.status_code == 200:
-                data = response.json()
+            resp = await client.get(url, params=params, headers={"X-Api-Key": api_key, "Accept": "application/json"})
+            print(f"[CallSessions] Ravan responded: HTTP {resp.status_code}")
+            if resp.status_code == 200:
+                data = resp.json()
+                s_list = data.get("data", {}).get("callSessions", []) if isinstance(data.get("data"), dict) else (data.get("calls", []) or data.get("data", []))
+                if isinstance(s_list, dict):
+                    s_list = s_list.get("callSessions", []) or []
                 
-                # Simply return all global sessions mapped to this key
-                return data
+                filtered_sessions = []
+
+                for s in s_list:
+                    # Secure Backend Sandbox Mapping -> Expose contacts strictly mapped to Agent arrays
+                    if current_user.role != 'admin' and target_agent_uuids:
+                        s_agent_id = str(s.get("agentId") or s.get("agent_id") or "")
+                        if s_agent_id not in target_agent_uuids:
+                            continue
+                            
+                    # Apply caller_number filter if set
+                    if caller_number:
+                        c1 = str(s.get("callerNumber") or s.get("caller_number") or "")
+                        c2 = str(s.get("calleeNumber") or s.get("callee_number") or "")
+                        if caller_number not in c1 and caller_number not in c2:
+                            continue
+                            
+                    filtered_sessions.append({
+                        "id": s.get("id"),
+                        "agentId": s.get("agentId") or s.get("agent_id"),
+                        "agentName": s.get("agentName") or s.get("agent_name"),
+                        "callerNumber": s.get("callerNumber") or s.get("caller_number"),
+                        "calleeNumber": s.get("calleeNumber") or s.get("callee_number"),
+                        "callerName": s.get("callerName") or s.get("caller_name"),
+                        "channel": s.get("channel"),
+                        "status": s.get("status"),
+                        "durationSec": s.get("durationSec") or s.get("duration_sec"),
+                        "costTotal": float(s.get("costTotal") or s.get("cost_total") or 0.0),
+                        "summary": s.get("summary"),
+                        "recordingUrl": s.get("recordingUrl") or s.get("recording_url"),
+                        "disconnectReason": s.get("disconnectReason") or s.get("disconnect_reason"),
+                        "errorMessage": s.get("errorMessage") or s.get("error_message"),
+                        "startedAt": s.get("startedAt") or s.get("started_at"),
+                        "endedAt": s.get("endedAt") or s.get("ended_at"),
+                        "createdAt": s.get("createdAt") or s.get("created_at"),
+                        "metadata": s.get("metadata") or {}
+                    })
+                
+                print(f"[CallSessions] Ravan returned {len(s_list)} raw, {len(filtered_sessions)} after agent filter.")
+                
+                # If Ravan returned 200 but zero filtered results, also try local DB as supplement
+                if not filtered_sessions:
+                    print("[CallSessions] Ravan gave 0 filtered results. Trying local PostgreSQL CallRecord fallback...")
+                    return build_local_fallback()
+                
+                filtered_sessions.sort(key=lambda x: str(x.get("createdAt") or x.get("startedAt") or ""), reverse=True)
+                start_idx = (page - 1) * page_size
+                end_idx = start_idx + page_size
+                paged_sessions = filtered_sessions[start_idx:end_idx]
+                
+                return {
+                    "data": {
+                        "callSessions": paged_sessions,
+                        "totalCount": len(filtered_sessions)
+                    }
+                }
             else:
-                print(f"Ravan Call Sessions Fetch Error ({response.status_code}):", response.text)
-                raise HTTPException(status_code=response.status_code, detail=f"Failed to fetch call sessions: {response.text}")
-        except httpx.RequestError as e:
-            raise HTTPException(status_code=500, detail=f"Network error fetching call sessions from Ravan: {str(e)}")
+                # Non-200 from Ravan (401, 500, etc.) → fallback to local DB
+                print(f"[CallSessions] Ravan returned {resp.status_code}. Using local PostgreSQL CallRecord fallback.")
+                return build_local_fallback()
+        except Exception as e:
+            print(f"[CallSessions] Exception: {e}. Using local PostgreSQL CallRecord fallback.")
+            return build_local_fallback()
 
 @router.get("/calling/phone-history")
 async def get_phone_history(
@@ -1024,43 +1855,79 @@ async def get_phone_history(
     page: int = 1,
     page_size: int = 20,
     include_transcripts: bool = False,
-    agent_id: str = None
+    agent_id: str = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
 ):
+    """
+    Renders purely off Ravan AI Call phone history dynamically natively, 
+    using hybrid local client mapping sandboxing.
+    """
     api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
-    if not api_key:
-        raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
-
     url = "https://api.ravan.ai/api/v1/calling/phone-history"
     
+    # We DO NOT send `agent_id` to Ravan, we just fetch based on phone
     params = {
         "phone": phone,
-        "page": page,
-        "page_size": page_size
+        "page": 1,
+        "page_size": 100, # fetch enough to sandbox natively
     }
-    if include_transcripts:
-        params["include_transcripts"] = "true"
-    if agent_id:
-        params["agent_id"] = agent_id
-
-    print(f"[DEBUG PHONE HISTORY] Requesting Phone: {phone} with params: {params}")
-
-    headers = {
-        "X-Api-Key": api_key,
-        "Accept": "application/json"
-    }
-
-    async with httpx.AsyncClient() as client:
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
         try:
-            response = await client.get(url, params=params, headers=headers)
-            print(f"[DEBUG PHONE HISTORY] Response Status: {response.status_code}")
-            print(f"[DEBUG PHONE HISTORY] Response Body: {response.text}")
-            if response.status_code == 200:
-                return response.json()
+            resp = await client.get(url, params=params, headers={"X-Api-Key": api_key, "Accept": "application/json"})
+            if resp.status_code == 200:
+                data = resp.json()
+                calls = data.get("calls") or data.get("data", {}).get("calls", [])
+                if not calls and isinstance(data.get("data"), list):
+                    calls = data["data"]
+                # Bulk generate security matrix once natively
+                target_agent_uuids = set()
+                if current_user.role != 'admin':
+                    agent_uuids = [current_user.ravan_agent_id] if current_user.ravan_agent_id else []
+                    assigned_records = db.exec(select(Assign_Agents.agent_id).where(Assign_Agents.user_id == current_user.id)).all()
+                    agent_uuids.extend(assigned_records)
+                    target_agent_uuids = set(agent_uuids)
+                    
+                filtered_calls = []
+                for c in calls:
+                    # Secure Backend Sandbox Mapping -> Expose contacts strictly mapped to target_agent_uuids
+                    if current_user.role != 'admin':
+                        c_agent_id = str(c.get("agentId") or c.get("agent_id") or "")
+                        
+                        if c_agent_id not in target_agent_uuids:
+                            continue # skip records from cross-tenants securely
+                    
+                    # mapping backend model style to UI expected model style just in case:
+                    mapped_call = {
+                        "id": c.get("id"),
+                        "status": c.get("status"),
+                        "durationSec": c.get("durationSec") or c.get("duration_sec"),
+                        "costTotal": float(c.get("costTotal") or c.get("cost_total") or 0.0),
+                        "summary": c.get("summary"),
+                        "startedAt": c.get("startedAt") or c.get("started_at"),
+                        "createdAt": c.get("createdAt") or c.get("created_at")
+                    }
+                    if include_transcripts and c.get("transcripts"):
+                        mapped_call["transcripts"] = c.get("transcripts")
+                        
+                    filtered_calls.append(mapped_call)
+                
+                # Apply local pagination
+                start_idx = (page - 1) * page_size
+                end_idx = start_idx + page_size
+                paged_calls = filtered_calls[start_idx:end_idx]
+                
+                return {
+                    "data": {
+                        "calls": paged_calls,
+                        "total_count": len(filtered_calls)
+                    }
+                }
             else:
-                print(f"Ravan Phone History Error ({response.status_code}):", response.text)
-                raise HTTPException(status_code=response.status_code, detail=f"Failed to fetch phone history: {response.text}")
-        except httpx.RequestError as e:
-            raise HTTPException(status_code=500, detail=f"Network error fetching phone history from Ravan: {str(e)}")
+                raise HTTPException(status_code=resp.status_code, detail=f"Ravan Phone History Error: {resp.text}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
 from fastapi.responses import RedirectResponse, StreamingResponse
 
@@ -1107,10 +1974,66 @@ async def get_call_audio_stream(url: str):
 
 
 @router.get("/calling/call-sessions-detail/{session_id}")
-async def get_call_session_detail(session_id: str):
+async def get_call_session_detail(session_id: str, db: Session = Depends(get_session)):
     api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
+    
+    def normalize_transcripts(transcripts):
+        if not transcripts:
+            return []
+        normalized = []
+        for item in transcripts:
+            if isinstance(item, dict):
+                new_item = dict(item)
+                msg = item.get("message")
+                if isinstance(msg, dict):
+                    if "role" not in new_item and "role" in msg:
+                        new_item["role"] = msg["role"]
+                    if "content" not in new_item and "content" in msg:
+                        new_item["content"] = msg["content"]
+                normalized.append(new_item)
+            else:
+                normalized.append(item)
+        return normalized
+
+    def build_local_detail_fallback():
+        from app.models.domain import CallRecord
+        from sqlmodel import select
+        r = db.exec(select(CallRecord).where(CallRecord.call_id == session_id)).first()
+        if r:
+            try:
+                tx = json.loads(r.transcript) if r.transcript else []
+            except Exception:
+                tx = []
+            return {
+                "success": True,
+                "data": {
+                    "id": r.call_id,
+                    "agent_id": r.agent_id,
+                    "agentName": r.agent_name,
+                    "agent_name": r.agent_name,
+                    "caller_number": r.caller_number,
+                    "callee_number": r.callee_number,
+                    "callerName": r.caller_name,
+                    "caller_name": r.caller_name,
+                    "channel": r.channel,
+                    "status": r.status,
+                    "durationSec": r.duration_sec,
+                    "duration_sec": r.duration_sec,
+                    "costTotal": r.cost,
+                    "recording_url": r.recording_url,
+                    "disconnectReason": r.disconnect_reason,
+                    "transcripts": normalize_transcripts(tx),
+                    "credit_breakdown": {
+                        "Channel": r.channel or "voice",
+                        "Duration Sec": r.duration_sec,
+                        "Total Credits": r.credits_used or r.cost
+                    }
+                }
+            }
+        raise HTTPException(status_code=404, detail="Call session details not found in Ravan nor in local postgres DB.")
+
     if not api_key:
-        raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
+        return build_local_detail_fallback()
 
     url = f"https://api.ravan.ai/api/v1/calling/call-sessions-detail/{session_id}"
     
@@ -1123,33 +2046,167 @@ async def get_call_session_detail(session_id: str):
         try:
             response = await client.get(url, headers=headers)
             if response.status_code == 200:
-                return response.json()
+                res_json = response.json()
+                if isinstance(res_json, dict):
+                    if "data" in res_json and isinstance(res_json["data"], dict):
+                        session_data = res_json["data"]
+                        session_data["transcripts"] = normalize_transcripts(session_data.get("transcripts"))
+                        session_data["recording_url"] = session_data.get("recording_url") or session_data.get("recordingUrl")
+                        if "credit_breakdown" not in session_data:
+                            session_data["credit_breakdown"] = {
+                                "Channel": session_data.get("channel") or "voice",
+                                "Duration Sec": session_data.get("duration_sec") or session_data.get("durationSec") or 0,
+                                "Total Credits": session_data.get("cost_total") or session_data.get("costTotal") or session_data.get("credits_used") or 0.0
+                            }
+                    else:
+                        res_json["transcripts"] = normalize_transcripts(res_json.get("transcripts"))
+                        res_json["recording_url"] = res_json.get("recording_url") or res_json.get("recordingUrl")
+                        if "credit_breakdown" not in res_json:
+                            res_json["credit_breakdown"] = {
+                                "Channel": res_json.get("channel") or "voice",
+                                "Duration Sec": res_json.get("duration_sec") or res_json.get("durationSec") or 0,
+                                "Total Credits": res_json.get("cost_total") or res_json.get("costTotal") or res_json.get("credits_used") or 0.0
+                            }
+                return res_json
             else:
-                print(f"Ravan Call Session Detail Error ({response.status_code}):", response.text)
-                raise HTTPException(status_code=response.status_code, detail=f"Failed to fetch call session details: {response.text}")
-        except httpx.RequestError as e:
-            raise HTTPException(status_code=500, detail=f"Network error fetching call session details from Ravan: {str(e)}")
-
-@router.get("/calling/global-cost-aggregation")
-async def get_global_cost_aggregation():
-    api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
-    headers = {"X-Api-Key": api_key, "Accept": "application/json"}
-    
-    # Using the standard call-sessions endpoint which returns all calls for all users globally in this account
-    url = "https://api.ravan.ai/api/v1/calling/call-sessions?page=1&page_size=10000"
-    
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        try:
-            res = await client.get(url, headers=headers)
-            if res.status_code == 200:
-                data = res.json()
-                # Parse native global structure
-                sessions = data.get("data", {}).get("callSessions", []) if data.get("data") else []
-                total_seconds = sum([float(s.get("duration") or s.get("durationIdSec") or s.get("duration_sec") or 0) for s in sessions])
-                total_credits = total_seconds / 60.0
-                return {"success": True, "total_coins": total_credits}
-            else:
-                return {"success": False, "total_coins": 0.0}
+                print(f"[CallSessionDetail] Ravan responded with {response.status_code}. Using local Postgres fallback.")
+                return build_local_detail_fallback()
         except Exception as e:
-            return {"success": False, "total_coins": 0.0, "error": str(e)}
+            print(f"[CallSessionDetail] Exception fetching from Ravan: {e}. Using local Postgres fallback.")
+            return build_local_detail_fallback()
 
+
+@router.post("/calling/finalize-session/{session_id}")
+async def finalize_call_session(session_id: str):
+    """
+    Called strictly once by the frontend immediately after a call ends (from WebRTC disconnect or explicit hangup).
+    Fetches the precise final detail from Ravan, maps it locally, calculates cost, and returns to frontend.
+    This entirely prevents frontend polling!
+    """
+    api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
+    url = f"https://api.ravan.ai/api/v1/calling/call-sessions-detail/{session_id}"
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(url, headers={"X-Api-Key": api_key, "Accept": "application/json"})
+            if resp.status_code == 200:
+                data = resp.json()
+                # Unpack if wrapped in 'data'
+                session_data = data.get("data") if "data" in data else data
+                
+                # Hand over to robust exact-cost DB injection service
+                from app.services.call_service import process_post_call_webhook
+                record = await process_post_call_webhook(session_data)
+                
+                # Wipe cache immediately so next UI load instantly reflects the finalized records
+                from app.core.redis_client import delete_cache
+                await delete_cache("call_sessions")
+                await delete_cache("dashboard")
+                
+                return {"success": True, "data": session_data, "local_record": record.model_dump() if record else None}
+            else:
+                raise HTTPException(status_code=resp.status_code, detail=f"Failed to finalize session details: {resp.text}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Network error finalizing call session: {str(e)}")
+
+from app.models.domain import InboundCampaign
+
+@router.get("/inbound-campaigns")
+async def get_inbound_campaigns(session: Session = Depends(get_session)):
+    campaigns = session.exec(select(InboundCampaign)).all()
+    return {"status": "success", "data": campaigns}
+
+class CreateInboundPayload(BaseModel):
+    phone_number: str
+    agent_id: str
+    agent_name: str
+    timezone: str
+    max_concurrent: int
+    budget_credits: str
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    window_start: Optional[str] = None
+    window_end: Optional[str] = None
+    active_days: str
+
+@router.post("/inbound-campaigns/create")
+async def create_inbound_campaign(payload: CreateInboundPayload, session: Session = Depends(get_session)):
+    # Persist locally
+    new_inbound = InboundCampaign(
+        phone_number=payload.phone_number,
+        agent_id=payload.agent_id,
+        agent_name=payload.agent_name,
+        timezone=payload.timezone,
+        max_concurrent=payload.max_concurrent,
+        budget_credits=payload.budget_credits,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        window_start=payload.window_start,
+        window_end=payload.window_end,
+        active_days=payload.active_days
+    )
+    session.add(new_inbound)
+    session.commit()
+    session.refresh(new_inbound)
+    
+    # Bridge route mapping directly on Ravan.ai API wrapper
+    async with httpx.AsyncClient() as client:
+        try:
+            encoded_number = urllib.parse.quote(payload.phone_number)
+            ravan_res = await client.patch(
+                f"https://api.ravan.ai/api/v1/phone-numbers/{encoded_number}/",
+                json={
+                    "inboundAgentId": payload.agent_id,
+                    "inbound_agent_id": payload.agent_id,
+                    "agent_id": payload.agent_id
+                },
+                headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
+            )
+            print(f"Ravan Inbound Linkage response: {ravan_res.status_code} - {ravan_res.text}")
+        except Exception as e:
+            print(f"Failed to propagate inbound routing to Ravan.ai: {str(e)}")
+            
+    return {"status": "success", "message": "Inbound campaign routed successfully", "data": new_inbound}
+
+@router.post("/inbound-campaigns/{cid}/pause")
+async def pause_inbound_campaign(cid: int, session: Session = Depends(get_session)):
+    obj = session.get(InboundCampaign, cid)
+    if not obj: raise HTTPException(status_code=404, detail="Inbound campaign not found.")
+    obj.status = "Paused"
+    session.add(obj)
+    session.commit()
+    return {"status": "success"}
+
+@router.post("/inbound-campaigns/{cid}/resume")
+async def resume_inbound_campaign(cid: int, session: Session = Depends(get_session)):
+    obj = session.get(InboundCampaign, cid)
+    if not obj: raise HTTPException(status_code=404, detail="Inbound campaign not found.")
+    obj.status = "Live"
+    session.add(obj)
+    session.commit()
+    return {"status": "success"}
+
+@router.delete("/inbound-campaigns/{cid}")
+async def delete_inbound_campaign(cid: int, session: Session = Depends(get_session)):
+    obj = session.get(InboundCampaign, cid)
+    if not obj: raise HTTPException(status_code=404, detail="Inbound campaign not found.")
+    
+    # Unlink route mapping directly on Ravan.ai API wrapper
+    async with httpx.AsyncClient() as client:
+        try:
+            encoded_number = urllib.parse.quote(obj.phone_number)
+            await client.patch(
+                f"https://api.ravan.ai/api/v1/phone-numbers/{encoded_number}/",
+                json={
+                    "inboundAgentId": None,
+                    "inbound_agent_id": None,
+                    "agent_id": None
+                },
+                headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
+            )
+        except Exception as e:
+            print(f"Failed to clear inbound routing on Ravan.ai: {str(e)}")
+            
+    session.delete(obj)
+    session.commit()
+    return {"status": "success"}

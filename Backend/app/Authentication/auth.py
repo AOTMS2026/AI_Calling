@@ -48,15 +48,12 @@ async def register(request: UserCreateRequest, db: Session = Depends(get_session
         raise HTTPException(status_code=400, detail="Email already registered")
         
     hashed_password = get_password_hash(request.password)
-    # Generate exactly a 64-bit identity signature for security tracking mapping
-    new_identity_hash = secrets.token_hex(32)
     
     new_user = User(
         name=request.name,
         email=request.email,
         phone=request.phone,
-        hashed_password=hashed_password,
-        identity_hash=new_identity_hash
+        hashed_password=hashed_password
     )
     db.add(new_user)
     db.commit()
@@ -220,7 +217,6 @@ def login(request: LoginRequest, db: Session = Depends(get_session)):
         "token_type": "bearer",
         "role": user.role,
         "ravan_agent_id": user.ravan_agent_id,
-        "identity_hash": user.identity_hash,
         "name": user.name,
         "email": user.email,
         "phone": user.phone
@@ -240,8 +236,16 @@ class PatchUserRoleRequest(BaseModel):
     allocated_credits: Optional[float] = None
 
 @router.get("/users")
-def get_all_users(db: Session = Depends(get_session)):
+async def get_all_users(db: Session = Depends(get_session)):
     """Admin-only pipeline intended to pull down full User architecture stats for rendering."""
+    from app.core.redis_client import get_cache, set_cache
+    
+    # 1. Structural Memory Cache hit logically
+    cached_payload = await get_cache("admin_global_users")
+    if cached_payload: 
+        print("⚡ REDIS CACHE HIT: Extracted Global User array natively in <1ms!")
+        return cached_payload
+    
     users = db.exec(select(User).order_by(User.id.desc())).all()
     # Exclude hashed_password natively
     safe_users = []
@@ -252,7 +256,6 @@ def get_all_users(db: Session = Depends(get_session)):
             "email": u.email,
             "phone": u.phone,
             "role": u.role,
-            "identity_hash": u.identity_hash,
             "ravan_agent_id": u.ravan_agent_id,
             "ravan_campaign_id": u.ravan_campaign_id,
             "ravan_phone_number_id": u.ravan_phone_number_id,
@@ -261,6 +264,8 @@ def get_all_users(db: Session = Depends(get_session)):
             "agent_quota": u.agent_quota,
             "allocated_credits": u.allocated_credits
         })
+        
+    await set_cache("admin_global_users", safe_users, 600)
     return safe_users
 
 @router.patch("/users/{user_id}")
@@ -309,6 +314,12 @@ def update_user_authorization(user_id: int, request: PatchUserRoleRequest, db: S
         
     db.commit()
     db.refresh(user)
+    
+    from app.core.redis_client import delete_cache
+    import asyncio
+    asyncio.run(delete_cache("admin_global_users"))
+    asyncio.run(delete_cache(f"user_auth_profile_{user.email}"))
+    
     return {"message": "User properties successfully synced securely."}
 
 @router.get("/verify-org/{org_id}")
@@ -334,13 +345,20 @@ async def verify_org_id(org_id: str):
 
 @router.get("/me")
 async def get_my_profile(current_user: User = Depends(get_current_user)):
-    return {
+    from app.core.redis_client import get_cache, set_cache
+    cache_key = f"user_auth_profile_{current_user.email}"
+    
+    cached_payload = await get_cache(cache_key)
+    if cached_payload: 
+        print(f"⚡ REDIS CACHE HIT: Extracted Auth Profile natively for {current_user.email} in <1ms!")
+        return cached_payload
+    
+    data = {
         "id": current_user.id,
         "name": current_user.name,
         "email": current_user.email,
         "phone": current_user.phone,
         "role": current_user.role,
-        "identity_hash": current_user.identity_hash,
         "ravan_agent_id": current_user.ravan_agent_id,
         "ravan_campaign_id": current_user.ravan_campaign_id,
         "ravan_phone_number_id": current_user.ravan_phone_number_id,
@@ -349,5 +367,7 @@ async def get_my_profile(current_user: User = Depends(get_current_user)):
         "agent_quota": current_user.agent_quota,
         "allocated_credits": current_user.allocated_credits
     }
+    await set_cache(cache_key, data, 1200) # 20 Minutes caching footprint perfectly optimized
+    return data
 
 

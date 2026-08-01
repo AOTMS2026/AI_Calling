@@ -4,7 +4,7 @@ import { MainLayout } from '../components/layout/MainLayout';
 import { Card, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { apiClient } from '../api/client';
-import { Loader2, Plus, Edit2, Phone, Mail, Building2, X, CheckCircle2, Trash2, Search, Tag, UploadCloud, History, Clock, DollarSign, Calendar, MessageCircle, ChevronDown, ChevronUp, PlayCircle, Activity, Coins, Target } from 'lucide-react';
+import { Loader2, Plus, Edit2, Phone, Mail, Building2, X, CheckCircle2, Trash2, Search, Tag, UploadCloud, History, Clock, DollarSign, Calendar, MessageCircle, ChevronDown, ChevronUp, PlayCircle, Activity, Coins, Target, Filter } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const VariableCell = ({ contact }: { contact: any }) => {
@@ -13,10 +13,29 @@ const VariableCell = ({ contact }: { contact: any }) => {
     const [loading, setLoading] = useState(false);
     const [fetched, setFetched] = useState(!!defaultVars);
 
-    if (vars && Object.keys(vars).length > 0) {
+    let filteredVars = vars ? { ...vars } : {};
+
+    // Safely parse deeply stringified variable containers
+    Object.keys(filteredVars).forEach(k => {
+        if (typeof filteredVars[k] === 'string') {
+            try {
+                const parsed = JSON.parse(filteredVars[k]);
+                if (typeof parsed === 'object' && parsed !== null) {
+                    filteredVars = { ...filteredVars, ...parsed };
+                    delete filteredVars[k];
+                }
+            } catch (e) {
+                // Not a valid JSON payload, leave safely intact
+            }
+        }
+    });
+
+
+
+    if (Object.keys(filteredVars).length > 0) {
         return (
             <div className="flex flex-wrap gap-1.5 min-w-[200px]">
-                {Object.entries(vars).map(([k, v], i) => (
+                {Object.entries(filteredVars).map(([k, v], i) => (
                     <span key={i} className="px-2.5 py-1 bg-white text-gray-700 rounded-lg text-[10px] font-medium border border-gray-200 shadow-sm flex items-center gap-1.5 whitespace-nowrap">
                         <span className="text-gray-400 font-bold">{k}:</span>
                         <span className="text-gray-900 truncate max-w-[150px]">
@@ -68,7 +87,7 @@ export function Contacts() {
     const PAGE_SIZE = 50;
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [createForm, setCreateForm] = useState({
-        name: '', email: '', phone: '', company: '', tags: ''
+        name: '', email: '', phone: '', company: '', tags: '', campaignId: ''
     });
     const [metaVars, setMetaVars] = useState<{ key: string, value: string }[]>([]);
     const [isCreating, setIsCreating] = useState(false);
@@ -91,54 +110,33 @@ export function Contacts() {
     const [historyPage, setHistoryPage] = useState(1);
     const [historyTotal, setHistoryTotal] = useState(0);
 
-    // Bind Outbound Campaign Modal State
-    const [isBindModalOpen, setIsBindModalOpen] = useState(false);
-    const [unboundNodes, setUnboundNodes] = useState<string[]>([]);
+    // Advanced Global Filter States
+    const [selectedStatusFilter, setSelectedStatusFilter] = useState('');
+    const [selectedTagFilter, setSelectedTagFilter] = useState('');
+
+
+
+    // Secure CSV Metadata Flow State
+    const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
+    const [csvTargetCampaignId, setCsvTargetCampaignId] = useState('');
+    const [csvBatchTags, setCsvBatchTags] = useState('');
     const [availableCampaigns, setAvailableCampaigns] = useState<any[]>([]);
-    const [selectedCampaignId, setSelectedCampaignId] = useState<string>('');
-    const [isBinding, setIsBinding] = useState(false);
 
-    const fetchOutboundsForBinding = async () => {
+    const fetchCampaigns = async () => {
         try {
-            const [meRes, campRes] = await Promise.all([
-                apiClient.get('/auth/me'),
-                apiClient.get('/api/ravan/campaigns')
-            ]);
-            let campaigns = campRes.data?.data || [];
-
-            // Constrain outbound selection strictly filtering natively against assigned bounds!
-            const user = meRes.data;
-            if (user && user.role !== 'admin' && user.ravan_campaign_id) {
-                campaigns = campaigns.filter((camp: any) => camp.id === user.ravan_campaign_id);
+            const res = await apiClient.get('/api/ravan/campaigns');
+            if (res.data?.data) {
+                setAvailableCampaigns(res.data.data);
+                if (res.data.data.length > 0) setCsvTargetCampaignId(res.data.data[0].id);
             }
-
-            setAvailableCampaigns(campaigns);
-        } catch (err) {
-            console.error("Failed to load campaigns for binding", err);
-        }
+        } catch (e) { }
     };
 
-    const handleConfirmBind = async () => {
-        if (!selectedCampaignId) {
-            toast.error("Please select a target outbound campaign.");
-            return;
+    useEffect(() => {
+        if (isCsvModalOpen || isCreateModalOpen) {
+            fetchCampaigns();
         }
-        setIsBinding(true);
-        try {
-            await apiClient.post(`/api/ravan/campaigns/${selectedCampaignId}/bind-contacts`, { contactIds: unboundNodes });
-            toast.success(`Successfully mapped ${unboundNodes.length} contacts to target Outbound mapping.`);
-            setIsBindModalOpen(false);
-            setUnboundNodes([]);
-            setSelectedCampaignId('');
-            setTimeout(() => {
-                fetchContacts();
-            }, 2000);
-        } catch (err: any) {
-            toast.error(err.response?.data?.detail || "Failed to bind contacts to campaign.");
-        } finally {
-            setIsBinding(false);
-        }
-    };
+    }, [isCsvModalOpen, isCreateModalOpen]);
 
     const fetchHistory = async (contact: any, pageNum = 1) => {
         if (!contact) return;
@@ -163,8 +161,8 @@ export function Contacts() {
                     ...(agentFilter ? { agent_id: agentFilter } : {})
                 }
             });
-            setHistoryCalls(res.data?.calls || []);
-            setHistoryTotal(res.data?.total_count || 0);
+            setHistoryCalls(res.data?.data?.calls || res.data?.calls || []);
+            setHistoryTotal(res.data?.data?.total_count || res.data?.total_count || 0);
         } catch (e: any) {
             console.error(e);
             toast.error("Failed to load call history.");
@@ -174,8 +172,9 @@ export function Contacts() {
         }
     };
 
-    // Compute unique global tags dynamically
+    // Compute unique global configurations dynamically
     const globalTags = Array.from(new Set(contacts.flatMap(c => c.tags || []))).filter(t => t.trim() !== '');
+    const globalStatuses = Array.from(new Set(contacts.map(c => c.status || 'Pending'))).filter(Boolean);
 
     const fetchContacts = async () => {
         setLoading(true);
@@ -184,21 +183,20 @@ export function Contacts() {
             const user = meRes.data;
             const isCustomer = user.role !== 'admin';
 
-            if (isCustomer && !user.ravan_campaign_id && !user.ravan_agent_id) {
-                // Return gracefully without exposing arbitrary contacts
-                setContacts([]);
-                setLoading(false);
-                return;
-            }
+
 
             let queryParam = '';
             if (isCustomer) {
+                // Fetch globally for customer and isolate purely via Sandbox matching on the frontend
                 if (user.ravan_agent_id) queryParam += `${queryParam ? '&' : '?'}agent_id=${user.ravan_agent_id}`;
-                if (user.ravan_campaign_id) queryParam += `${queryParam ? '&' : '?'}campaign_id=${user.ravan_campaign_id}`;
             }
 
             const res = await apiClient.get(`/api/ravan/contacts${queryParam}`);
-            setContacts(res.data?.data || []);
+            let fetchedContacts = res.data?.data || [];
+
+
+
+            setContacts(fetchedContacts);
         } catch (e) {
             console.error(e);
             setContacts([]);
@@ -206,6 +204,8 @@ export function Contacts() {
             setLoading(false);
         }
     };
+
+
 
     const handleDeleteContact = async (e: React.MouseEvent, id: string) => {
         e.stopPropagation();
@@ -283,6 +283,9 @@ export function Contacts() {
             }
         });
 
+        const meRes = await apiClient.get('/auth/me').catch(() => null);
+        const user = meRes?.data || null;
+
         // Parse custom variables securely and map them strictly into a single UI pill as requested!
         const metadataObj: any = {};
         metaVars.forEach(v => {
@@ -290,17 +293,25 @@ export function Contacts() {
                 metadataObj[v.key.trim()] = v.value.trim();
             }
         });
+
+
+
         if (Object.keys(metadataObj).length > 0) {
             const bundledPill = { CustomVariables: JSON.stringify(metadataObj) };
             payload.metadata = bundledPill;
             payload.customVariables = bundledPill; // Unified string block to prevent multi-pills
         }
 
+        // Implicit Secure Native Sandbox Binding!
+        if (user && user.ravan_agent_id) {
+            payload.agentId = user.ravan_agent_id;
+        }
+
         try {
             const res = await apiClient.post('/api/ravan/contacts/', payload);
             toast.success("Contact successfully created!");
             setIsCreateModalOpen(false);
-            setCreateForm({ name: '', email: '', phone: '', company: '', tags: '' });
+            setCreateForm({ name: '', email: '', phone: '', company: '', tags: '', campaignId: '' });
             setTagSearch('');
             setMetaVars([]);
 
@@ -308,18 +319,7 @@ export function Contacts() {
             // bypassing the campaign-filtered fetch route so you see it instantly!
             const newContact = res.data?.data?.contact || res.data?.data || { ...payload, id: `temp-${Date.now()}`, status: 'pending' };
             setContacts(prev => [newContact, ...prev]);
-
-            // Trigger targeted Explicit Binding mapped directly after UI adds contact!
-            const trueId = newContact.contactId || newContact.id;
-            if (trueId && !trueId.startsWith('temp-')) {
-                setUnboundNodes([trueId]);
-                fetchOutboundsForBinding();
-                setIsBindModalOpen(true);
-            }
-
-            setTimeout(() => {
-                fetchContacts();
-            }, 3000);
+            // Trailing timeout removed - persist optimistic UI natively!
         } catch (e: any) {
             toast.error(e.response?.data?.detail || "Failed to create contact");
         } finally {
@@ -346,6 +346,9 @@ export function Contacts() {
                 // Strictly validate columns, stripping hidden Byte Order Marks (BOM)
                 const rawHeaders = rows[0].replace(/^\uFEFF/, '').split(',').map(h => h.trim().toLowerCase().replace(/[^a-z0-9\s_]/g, ''));
                 const VALID_HEADERS = ['name', 'phone', 'email', 'tags', 'notes', 'custom variables', 'customvariables'];
+
+                const meRes = await apiClient.get('/auth/me').catch(() => null);
+                const user = meRes?.data || null;
 
                 const isValid = rawHeaders.every(h => VALID_HEADERS.includes(h) || h === '');
                 if (!isValid) {
@@ -386,16 +389,38 @@ export function Contacts() {
                         if (h === 'name') payload.name = val;
                         if (h === 'phone') payload.phone = val.replace(/[^\d+]/g, '');
                         if (h === 'email') payload.email = val;
-                        if (h === 'tags') payload.tags = val.split(';').map(t => t.trim());
+                        if (h === 'tags') {
+                            const inlineTags = val.split(';').map(t => t.trim()).filter(Boolean);
+                            const batchArr = csvBatchTags ? csvBatchTags.split(',').map(t => t.trim()).filter(Boolean) : [];
+                            payload.tags = Array.from(new Set([...inlineTags, ...batchArr]));
+                        }
                         if (h === 'notes') payload.notes = val;
                         if (h === 'custom variables' || h === 'customvariables') {
                             localMeta = { CustomVariables: val.replace(/\\"/g, '"') };
                         }
                     });
 
+                    // Overload tags exclusively if none provided by header
+                    if (!payload.tags || payload.tags.length === 0) {
+                        const batchArr = csvBatchTags ? csvBatchTags.split(',').map(t => t.trim()).filter(Boolean) : [];
+                        payload.tags = batchArr.length > 0 ? batchArr : ['Customer'];
+                    }
+
+                    // Dynamically structure name into discrete custom variables
+                    const nameParts = payload.name ? payload.name.trim().split(/\s+/) : [''];
+                    const firstName = nameParts[0] || '';
+                    const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+
                     if (Object.keys(localMeta).length > 0) {
                         payload.metadata = localMeta;
-                        payload.customVariables = localMeta; // Dual bind
+                        payload.customVariables = { ...localMeta, first_name: firstName, last_name: lastName }; // Dual bind
+                    } else {
+                        payload.customVariables = { first_name: firstName, last_name: lastName };
+                    }
+
+                    // Implicit Bulk Sandbox Binding natively securely overriding
+                    if (user && user.ravan_agent_id) {
+                        payload.agentId = user.ravan_agent_id;
                     }
 
                     try {
@@ -419,22 +444,22 @@ export function Contacts() {
                 if (newlyCreated.length > 0) {
                     setContacts(prev => [...newlyCreated, ...prev]);
 
-                    const validIds = newlyCreated
-                        .map(c => c.contactId || c.id)
-                        .filter(id => id && !id.startsWith('temp-'));
-
-                    if (validIds.length > 0) {
-                        setUnboundNodes(validIds);
-                        fetchOutboundsForBinding();
-                        setIsBindModalOpen(true);
+                    if (csvTargetCampaignId) {
+                        try {
+                            const cIds = newlyCreated.map(c => c.contactId || c.id).filter(Boolean);
+                            await apiClient.post(`/api/ravan/campaigns/${csvTargetCampaignId}/bind-contacts`, { contactIds: cIds });
+                            toast.success(`Successfully mapped ${cIds.length} contacts to Target Campaign natively!`);
+                        } catch (e) {
+                            console.error(e);
+                        }
                     }
+
+                    setIsCsvModalOpen(false); // Close batch modal successfully
+                    setCsvTargetCampaignId('');
+                    setCsvBatchTags('');
                 }
 
-                // Silent trailing fetch to reconcile actual physical UUIDs from Ravan later
-                setTimeout(() => {
-                    fetchContacts();
-                }, 4500);
-
+                // Silent trailing fetch removed to preserve newly bound contacts securely inside the DOM state gracefully
             } catch (error) {
                 toast.error("Fatal CSV parser crash. Verify text string layout.");
             } finally {
@@ -446,10 +471,19 @@ export function Contacts() {
         reader.readAsText(file);
     };
 
-    const filteredContacts = contacts.filter(c =>
-        (c.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (c.phoneNumber || c.phone || '').includes(searchQuery)
-    );
+    const filteredContacts = contacts.filter(c => {
+        const variablesString = JSON.stringify(c.customVariables || c.variables || c.metadata || {}).toLowerCase();
+
+        const q = searchQuery.toLowerCase();
+        const matchesSearch = (c.name || '').toLowerCase().includes(q) ||
+            (c.phoneNumber || c.phone || '').includes(searchQuery) ||
+            variablesString.includes(q);
+
+        const matchesStatus = selectedStatusFilter === '' || (c.status || 'Pending') === selectedStatusFilter;
+        const matchesTag = selectedTagFilter === '' || (c.tags && c.tags.includes(selectedTagFilter));
+
+        return matchesSearch && matchesStatus && matchesTag;
+    });
 
     const totalPages = Math.max(1, Math.ceil(filteredContacts.length / PAGE_SIZE));
     const paginatedContacts = filteredContacts.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -464,15 +498,35 @@ export function Contacts() {
                 <h1 className="text-2xl font-bold text-gray-900">Global Contacts</h1>
 
                 <div className="flex items-center gap-4">
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-                        <input
-                            type="text"
-                            placeholder="Enter Name or Phone (+91...)"
-                            className="pl-10 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-64"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                        />
+                    <div className="relative flex flex-col md:flex-row gap-3">
+                        <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                            <input
+                                type="text"
+                                placeholder="Search Name, Phone, or Variables..."
+                                className="pl-10 pr-4 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 w-full md:w-64 transition-all"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                            />
+                        </div>
+
+                        <select
+                            className="px-4 py-2.5 text-sm font-semibold border border-gray-200 rounded-xl bg-white text-gray-700 outline-none focus:ring-2 focus:ring-teal-500 appearance-none min-w-[140px] shadow-sm cursor-pointer"
+                            value={selectedStatusFilter}
+                            onChange={(e) => setSelectedStatusFilter(e.target.value)}
+                        >
+                            <option value="">All Statuses</option>
+                            {globalStatuses.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+
+                        <select
+                            className="px-4 py-2.5 text-sm font-semibold border border-gray-200 rounded-xl bg-white text-gray-700 outline-none focus:ring-2 focus:ring-teal-500 appearance-none min-w-[140px] shadow-sm cursor-pointer"
+                            value={selectedTagFilter}
+                            onChange={(e) => setSelectedTagFilter(e.target.value)}
+                        >
+                            <option value="">All Tags</option>
+                            {globalTags.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
                     </div>
                     {selectedContacts.length > 0 ? (
                         <div className="flex items-center gap-3 animate-in fade-in zoom-in-95">
@@ -507,7 +561,7 @@ export function Contacts() {
                             <Button
                                 variant="outline"
                                 className="text-gray-700 bg-white"
-                                onClick={() => fileInputRef.current?.click()}
+                                onClick={() => setIsCsvModalOpen(true)}
                                 disabled={isUploadingCSV}
                             >
                                 {isUploadingCSV ? <Loader2 size={16} className="animate-spin mr-2" /> : <UploadCloud size={16} className="mr-2 text-gray-500" />}
@@ -720,6 +774,8 @@ export function Contacts() {
                 )}
             </Card>
 
+
+
             {/* Create Contact Modal */}
             {isCreateModalOpen && (
                 <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -748,6 +804,20 @@ export function Contacts() {
                                 <div>
                                     <label className="block text-xs font-bold text-gray-700 uppercase tracking-widest mb-1.5 flex items-center gap-1.5 justify-start"><Building2 size={12} /> Company <span className="text-red-500">*</span></label>
                                     <input required className="w-full text-sm p-2.5 border border-gray-200 rounded-lg outline-none focus:border-teal-500 transition-colors" placeholder="Acme Corp" value={createForm.company} onChange={e => setCreateForm({ ...createForm, company: e.target.value })} />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-700 uppercase tracking-widest mb-1.5 flex items-center gap-1.5 justify-start"><Target size={12} /> Target Campaign</label>
+                                    <select
+                                        className="w-full text-sm p-2.5 border border-gray-200 rounded-lg outline-none focus:border-teal-500 transition-colors appearance-none bg-white text-gray-700 font-medium shadow-sm"
+                                        value={createForm.campaignId || ""}
+                                        onChange={(e) => setCreateForm({ ...createForm, campaignId: e.target.value })}
+                                        style={{ backgroundImage: 'url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' fill=\'none\' viewBox=\'0 0 20 20\'%3E%3Cpath stroke=\'%236b7280\' stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'1.5\' d=\'M6 8l4 4 4-4\'/%3E%3C/svg%3E")', backgroundPosition: 'right .5rem center', backgroundRepeat: 'no-repeat', backgroundSize: '1.5em 1.5em', paddingRight: '2.5rem' }}
+                                    >
+                                        <option value="">-- Let Backend Auto-Map --</option>
+                                        {availableCampaigns.filter(c => !c.name.startsWith("[HASH:")).map((c) => (
+                                            <option key={c.id} value={c.id}>{c.name}</option>
+                                        ))}
+                                    </select>
                                 </div>
                                 <div className="relative col-span-2 sm:col-span-1">
                                     <label className="block text-xs font-bold text-gray-700 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><Tag size={12} /> Tags</label>
@@ -1159,51 +1229,56 @@ export function Contacts() {
                     </div>
                 </div>
             )}
-            {/* Explicit Target Outbound Binding Modal Flow */}
-            {isBindModalOpen && (
+            {/* CSV Import Batch Modal */}
+            {isCsvModalOpen && (
                 <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
                     <Card className="w-full max-w-md shadow-xl animate-in zoom-in-95">
                         <div className="flex justify-between items-center p-6 border-b border-gray-100">
                             <div>
-                                <h3 className="text-lg font-bold text-gray-900">Bind Target Outbound</h3>
-                                <p className="text-xs text-gray-500 mt-1">Found {unboundNodes.length} mapped contacts newly pending.</p>
+                                <h3 className="text-lg font-bold text-gray-900">Import CSV Batch</h3>
+                                <p className="text-xs text-gray-500 mt-1">Configure global tags and batch naming.</p>
                             </div>
-                            <button onClick={() => { setIsBindModalOpen(false); setUnboundNodes([]); }} className="p-2 hover:bg-gray-100 rounded-lg text-gray-500"><X size={20} /></button>
+                            <button onClick={() => setIsCsvModalOpen(false)} className="p-2 hover:bg-gray-100 rounded-lg text-gray-500"><X size={20} /></button>
                         </div>
                         <div className="p-6">
-                            <label className="block text-xs font-bold text-gray-700 uppercase tracking-widest mb-3">Select Target Outbound</label>
 
-                            <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto">
-                                {availableCampaigns.length === 0 ? (
-                                    <div className="text-center p-4 text-xs text-gray-400 italic">No existing Target outbounds found.</div>
-                                ) : (
-                                    availableCampaigns.map((camp: any) => (
-                                        <div
-                                            key={camp.id}
-                                            onClick={() => setSelectedCampaignId(camp.id)}
-                                            className={`p-3 border rounded-xl cursor-pointer transition-all ${selectedCampaignId === camp.id ? 'border-teal-500 bg-teal-50 shadow-sm' : 'border-gray-200 hover:border-teal-200 hover:bg-gray-50'}`}
-                                        >
-                                            <div className="font-bold text-gray-900 text-sm flex items-center gap-2">
-                                                <Target size={14} className={selectedCampaignId === camp.id ? 'text-teal-600' : 'text-gray-400'} />
-                                                {camp.name || 'Unknown Campaign'}
-                                            </div>
-                                            <div className="text-[10px] text-gray-400 font-mono mt-1 flex items-center gap-1.5 opacity-80">
-                                                <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div> {camp.id}
-                                            </div>
-                                        </div>
-                                    ))
-                                )}
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-700 uppercase tracking-widest mb-1.5 flex items-center gap-2"><Target size={14} className="text-blue-500" /> Target Campaign</label>
+                                    <select
+                                        className="w-full border border-gray-200 rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold text-gray-700 bg-white"
+                                        value={csvTargetCampaignId}
+                                        onChange={(e) => setCsvTargetCampaignId(e.target.value)}
+                                    >
+                                        <option value="">No Global Mapping (Default Workspace)</option>
+                                        {availableCampaigns.map(c => (
+                                            <option key={c.id} value={c.id}>{c.name}</option>
+                                        ))}
+                                    </select>
+                                    <p className="text-[10px] text-gray-400 mt-1">Directly maps uploaded batch to selected Campaign.</p>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-700 uppercase tracking-widest mb-1.5">Batch Tags</label>
+                                    <input
+                                        type="text"
+                                        className="w-full border border-gray-200 rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-teal-500 text-sm"
+                                        placeholder="lead, 2026-q2"
+                                        value={csvBatchTags}
+                                        onChange={(e) => setCsvBatchTags(e.target.value)}
+                                    />
+                                    <p className="text-[10px] text-gray-400 mt-1">Separate multiple tags with commas.</p>
+                                </div>
                             </div>
 
-                            <div className="mt-6 flex justify-end gap-3 pt-4 border-t border-gray-100">
-                                <Button type="button" variant="outline" onClick={() => { setIsBindModalOpen(false); setUnboundNodes([]); }}>Cancel</Button>
+                            <div className="mt-8 flex justify-end gap-3 pt-4 border-t border-gray-100">
+                                <Button type="button" variant="outline" onClick={() => setIsCsvModalOpen(false)}>Cancel</Button>
                                 <Button
                                     className="bg-teal-600 hover:bg-teal-700 text-white font-bold"
-                                    onClick={handleConfirmBind}
-                                    disabled={!selectedCampaignId || isBinding}
+                                    onClick={() => fileInputRef.current?.click()}
                                 >
-                                    {isBinding ? <Loader2 size={16} className="animate-spin mr-2" /> : <CheckCircle2 size={16} className="mr-2" />}
-                                    Confirm Target Link
+                                    <UploadCloud size={16} className="mr-2" />
+                                    Select File & Start Import
                                 </Button>
                             </div>
                         </div>

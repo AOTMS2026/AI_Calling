@@ -12,18 +12,27 @@ import { Campaign } from './pages/Campaign';
 import { Contacts } from './pages/Contacts';
 import { ContactDetail } from './pages/ContactDetail';
 import { CampaignDetail } from './pages/CampaignDetail';
+import { InboundCampaign } from './pages/InboundCampaign';
 import { Profile } from './pages/Profile';
 import { Settings } from './pages/Settings';
 import { Analytics } from './pages/Analytics';
 import { UserManagement } from './pages/UserManagement';
 import { AssignAgent } from './pages/AssignAgent';
+import { AssignCredits } from './pages/AssignCredits';
 import { AssignCampaign } from './pages/AssignCampaign';
-import { AssignPhone } from './pages/AssignPhone';
+import { AdminAppointments } from './pages/AdminAppointments';
+import AdminCalcom from './pages/AdminCalcom';
+import { AdminAgentsAssigningList } from './pages/AdminAgentsAssigningList';
+
 import { OrganizationSettings } from './pages/OrganizationSettings';
 import { PhoneNumbers } from './pages/PhoneNumbers';
+import { AdminPhoneNumbers } from './pages/AdminPhoneNumbers';
 import { Calls } from './pages/Calls';
 import { GlobalChatBot } from './components/GlobalChatBot';
 import { Toaster } from 'react-hot-toast';
+import { Appointments } from './pages/Appointments';
+import { TodoList } from './pages/TodoList';
+import WhatsAppAutomation from './pages/WhatsAppAutomation';
 
 function App() {
   return (
@@ -59,6 +68,7 @@ function App() {
           <Route path="/agents" element={<Agents />} />
           <Route path="/agents/:id" element={<AgentBuilder />} />
           <Route path="/campaigns/outbound" element={<Campaign />} />
+          <Route path="/campaigns/inbound" element={<InboundCampaign />} />
           <Route path="/campaigns/outbound/:id" element={<CampaignDetail />} />
           <Route path="/contacts" element={<Contacts />} />
           <Route path="/contacts/:id" element={<ContactDetail />} />
@@ -67,11 +77,19 @@ function App() {
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/users" element={<UserManagement />} />
           <Route path="/assign-agent" element={<AssignAgent />} />
+          <Route path="/assign-credits" element={<AssignCredits />} />
           <Route path="/assign-campaign" element={<AssignCampaign />} />
-          <Route path="/assign-phone" element={<AssignPhone />} />
+          <Route path="/appointments" element={<Appointments />} />
+          <Route path="/admin/appointments" element={<AdminAppointments />} />
+          <Route path="/admin/calcom" element={<AdminCalcom />} />
+          <Route path="/admin/assigned-agents" element={<AdminAgentsAssigningList />} />
+
           <Route path="/organization" element={<OrganizationSettings />} />
           <Route path="/phone-numbers" element={<PhoneNumbers />} />
+          <Route path="/admin/phone-numbers" element={<AdminPhoneNumbers />} />
           <Route path="/calls" element={<Calls />} />
+          <Route path="/todos" element={<TodoList />} />
+          <Route path="/whatsapp" element={<WhatsAppAutomation />} />
 
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>

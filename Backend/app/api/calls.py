@@ -87,5 +87,77 @@ async def ravan_call_webhook(request: Request, db: Session = Depends(get_session
             
             db.commit()
             
-    print(f"WEBHOOK INTERCEPTED -> Call SID {call_sid} | Analysis Parsed!")
-    return {"message": "Webhook absorbed successfully."}
+    # Autonomous "+" Linear Accumulation for Dashboard Metrics!
+    try:
+        from app.models.domain import DashboardMetrics
+        from datetime import datetime
+        agent_id = payload.get("agentId") or payload.get("data", {}).get("agentId")
+        
+        if agent_id:
+            metric = db.exec(select(DashboardMetrics).where(DashboardMetrics.agent_id == agent_id)).first()
+            if not metric:
+                metric = DashboardMetrics(agent_id=agent_id)
+                db.add(metric)
+            
+            new_cost = float(payload.get("costTotal") or payload.get("data", {}).get("costTotal") or 0.0)
+            new_duration = int(payload.get("durationSec") or payload.get("data", {}).get("durationSec") or 0)
+            status_val = str(payload.get("status") or payload.get("data", {}).get("status") or "").lower()
+            
+            # Immediately add exactly using the requested "+" Operater natively (multiplying by 7rs exchange explicitly)!
+            metric.total_cost = round(metric.total_cost + (new_cost * 7.0), 4)
+            metric.total_duration_sec += new_duration
+            metric.total_calls += 1
+            
+            if status_val in ["completed", "success"]:
+                metric.success_calls += 1
+            elif status_val in ["failed", "no_answer", "busy"]:
+                metric.failed_calls += 1
+                
+                # Auto-generate SOS Task: Find assigned User ID
+                try:
+                    from app.models.domain import Assign_Agents
+                    from app.models.models_todo import Todo, TodoActivity
+                    
+                    mapping = db.exec(select(Assign_Agents).where(Assign_Agents.agent_id == agent_id)).first()
+                    user_id = mapping.user_id if mapping else 1
+                    
+                    # Create SOS Task
+                    title = f"🚨 Call Handoff Alert ({status_val.upper()})"
+                    details = f"Automatic SOS created due to call drop/failure. Agent: {agent_id}. Duration: {new_duration}s. Cost: {new_cost}."
+                    
+                    sos_todo = Todo(
+                        title=title,
+                        description=details,
+                        priority="SOS",
+                        status="Pending",
+                        category="Lead Follow-up",
+                        agent_id=agent_id,
+                        user_id=user_id,
+                        subtasks="[]"
+                    )
+                    db.add(sos_todo)
+                    db.commit()
+                    db.refresh(sos_todo)
+                    
+                    # Log Activity
+                    activity = TodoActivity(
+                        todo_id=sos_todo.id,
+                        action="Created",
+                        details=f"Auto-generated critical SOS alarm for call failure ({status_val})."
+                    )
+                    db.add(activity)
+                    db.commit()
+                    print(f"SOS TASK AUTO-GENERATED -> Created Todo {sos_todo.id} for User {user_id}")
+                except Exception as ex_todo:
+                    print("SOS Task Auto-Generation Error:", str(ex_todo))
+                
+            if metric.total_calls > 0:
+                metric.success_rate = round((metric.success_calls / metric.total_calls) * 100, 2)
+                
+            metric.last_updated = datetime.utcnow()
+            db.commit()
+            print(f"WEBHOOK INTERCEPTED -> Added +{new_cost} Cost internally to Agent {agent_id}")
+    except Exception as ex:
+        print("Webhook Metric Injection Trapped Error:", str(ex))
+            
+    return {"message": "Webhook absorbed and Metrics Accumulated successfully."}

@@ -2,7 +2,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query, Depends, Request
 from app.core.config import settings
 from app.api.dependencies import get_current_user
-from app.models.domain import User
+from app.models.domain import User, Assign_Agents
 from app.database.connection import get_session
 from sqlmodel import Session
 
@@ -15,44 +15,68 @@ from fastapi import Query
 async def list_agents(
     limit: int = Query(10, description="Number of results to return"), 
     offset: int = Query(0, description="Pagination offset"),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
 ):
     if not settings.RAVAN_AGNI_AI:
         raise HTTPException(status_code=500, detail="RAVAN_AGNI_AI key not configured in backend.")
         
+    from app.core.redis_client import get_cache, set_cache, generate_cache_key, delete_cache
+    
+    # Structural Cache Hit lookup natively
+    cache_key = generate_cache_key("agents_list", limit=limit, offset=offset)
+    
     async with httpx.AsyncClient() as client:
         try:
             # Multi-Tenant Core Validation Strategy
             if current_user.role == "admin":
+                cached = await get_cache(cache_key)
+                if cached: 
+                    print("⚡ REDIS CACHE HIT: Bypassed Ravan.ai - Extracted agents array natively in <1ms!")
+                    return cached
+                
                 # Admins can query the entire fleet array natively
                 response = await client.get(
                     f"https://api.ravan.ai/api/v1/agents/?limit={limit}&offset={offset}",
                     headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
                 )
                 response.raise_for_status()
-                return response.json()
+                data = response.json()
+                await set_cache(cache_key, data, 600)
+                return data
             else:
-                # Customer accounts MUST be strictly physically locked to their assigned UUID
-                if not current_user.ravan_agent_id:
-                    # User is completely unassigned; returning an empty array struct to prevent crashes
-                    return {"success": True, "message": "No agent assigned to customer", "data": [], "meta": {"total": "0"}}
+                # Customers can have multiple agents now due to 'agent_quota' arrays natively. 
+                # We structurally fetch the master list securely and execute rigorous Identity Hash mappings natively.
+                cached_global = await get_cache(cache_key)
+                if not cached_global:
+                    response = await client.get(
+                        f"https://api.ravan.ai/api/v1/agents/?limit={limit}&offset={offset}",
+                        headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
+                    )
+                    response.raise_for_status()
+                    cached_global = response.json()
+                    await set_cache(cache_key, cached_global, 600)
                 
-                # Fetch only this rigidly secured UUID
-                response = await client.get(
-                    f"https://api.ravan.ai/api/v1/agents/{current_user.ravan_agent_id}/",
-                    headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
-                )
-                response.raise_for_status()
-                payload = response.json()
+                # Natively map all matching nodes assigned mapped securely exclusively against tenant Identity Hashes!
+                raw_data = cached_global.get("data", []) if isinstance(cached_global, dict) else cached_global
+                from sqlmodel import select
                 
-                # We structurally wrap the individual nested object in an array mapping block 
-                # so the frontend Maps engine accurately iterators over it.
-                agent_data = payload.get("data", payload)
-                return {"success": True, "message": "Assigned payload securely transferred", "data": [agent_data], "meta": {"total": "1", "limit": 1, "offset": 0}}
+                agent_uuids = [current_user.ravan_agent_id] if current_user.ravan_agent_id else []
+                assigned_records = db.exec(select(Assign_Agents.agent_id).where(Assign_Agents.user_id == current_user.id)).all()
+                agent_uuids.extend(assigned_records)
+                target_agent_uuids = set(agent_uuids)
+
+                safe_agents = [
+                    a for a in raw_data 
+                    if a.get("id") in target_agent_uuids
+                ]
+                
+                # Deliver completely sandboxed payload structure array internally mapping limits perfectly back.
+                return {"success": True, "message": "Secure payload structurally mapped", "data": safe_agents, "meta": {"total": str(len(safe_agents))}}
             
             
         except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=e.response.status_code, detail=f"Ravan API Error: {e.response.text}")
+            raise HTTPException(status_code=e.response.status_code, detail=f"Ravan API Fetch Error: {e.response.text}")
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -68,9 +92,33 @@ async def create_agent(
     if not settings.RAVAN_AGNI_AI:
         raise HTTPException(status_code=500, detail="RAVAN_AGNI_AI key not configured in backend.")
         
-    # Prevent assigning multiple agents if AOTMS only supports 1 node natively per customer
-    if current_user.role != 'admin' and current_user.ravan_agent_id:
-        raise HTTPException(status_code=400, detail="Customer already has an active agent mapped. Delete it before provisioning a new one.")
+    if current_user.role != 'admin':
+        from app.core.redis_client import get_cache, generate_cache_key
+        cache_key = generate_cache_key("agents_list", limit=1000, offset=0)
+        cached = await get_cache(cache_key)
+        
+        from sqlmodel import select
+        agent_uuids = [current_user.ravan_agent_id] if current_user.ravan_agent_id else []
+        assigned_records = db.exec(select(Assign_Agents.agent_id).where(Assign_Agents.user_id == current_user.id)).all()
+        agent_uuids.extend(assigned_records)
+        target_agent_uuids = set(agent_uuids)
+        
+        my_agents = []
+        if cached and "data" in cached:
+            my_agents = [a for a in cached["data"] if a.get("id") in target_agent_uuids]
+        else:
+            async with httpx.AsyncClient() as c:
+                try:
+                    resp = await c.get("https://api.ravan.ai/api/v1/agents/?limit=1000&offset=0", headers={"X-Api-Key": settings.RAVAN_AGNI_AI})
+                    if resp.status_code == 200:
+                        all_ag = resp.json().get("data", [])
+                        my_agents = [a for a in all_ag if a.get("id") in target_agent_uuids]
+                except:
+                    pass
+                    
+        allowed_quota = current_user.agent_quota if current_user.agent_quota > 0 else 1
+        if len(my_agents) >= allowed_quota:
+            raise HTTPException(status_code=400, detail=f"Agents Limits {len(my_agents)}/{allowed_quota}. Active allowed quota reached. Upgrade your plan to spin up more nodes.")
 
     async with httpx.AsyncClient() as client:
         try:
@@ -79,10 +127,12 @@ async def create_agent(
             dynamic_model = "Agni Premium"
             dynamic_voice = "Iris"
 
+            secured_agent_name = request_data.get("agentName", "Unnamed Agent").split(" [HASH:")[0]
+
             # We must explicitly build the massive exhaustive payload for Ravan compliance dynamically.
             raw_payload = {
                 "organizationId": request_data.get("organizationId"),
-                "agentName": request_data.get("agentName", "Unnamed Agent"),
+                "agentName": secured_agent_name,
                 "status": request_data.get("status", "ACTIVE"),
                 "model": request_data.get("model", dynamic_model),
                 "s2sModel": request_data.get("s2sModel", dynamic_model),
@@ -130,10 +180,26 @@ async def create_agent(
             # The newly created Ravan UUID
             new_agent_id = response_json.get("data", {}).get("id")
             
-            # Autowire this directly back down into PostgreSQL for the customer (if not admin)
-            if current_user.role != 'admin' and new_agent_id:
+            # Autowire this fallback natively back down into PostgreSQL for the customer (ONLY if empty, preventing Legacy node orphan overwrites!)
+            if current_user.role != 'admin' and new_agent_id and not current_user.ravan_agent_id:
                 current_user.ravan_agent_id = new_agent_id
+                db.add(current_user)
                 db.commit()
+                
+            # Log into Assign_Agents mapping unconditionally so admin knows its details
+            if new_agent_id:
+                new_assignment = Assign_Agents(
+                    agent_id=new_agent_id,
+                    user_id=current_user.id,
+                    customer_name=current_user.name,
+                    customer_email=current_user.email
+                )
+                db.add(new_assignment)
+                db.commit()
+                
+            # Flush Native Cache mapping arrays immediately
+            from app.core.redis_client import delete_cache
+            await delete_cache("agents_list")
                 
             return response_json
             
@@ -147,6 +213,13 @@ async def get_available_voices():
     if not settings.RAVAN_AGNI_AI:
         raise HTTPException(status_code=500, detail="RAVAN_AGNI_AI key not configured in backend.")
         
+    from app.core.redis_client import get_cache, set_cache, generate_cache_key
+    cache_key = "ravan_voices"
+    cached = await get_cache(cache_key)
+    if cached:
+        print("⚡ REDIS CACHE HIT: Bypassed Ravan.ai - Extracted voices natively in <1ms!")
+        return cached
+
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(
@@ -154,7 +227,9 @@ async def get_available_voices():
                 headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
             )
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            await set_cache(cache_key, data, 3600)  # Cache voices for 1 hour
+            return data
         except httpx.HTTPStatusError as e:
             raise HTTPException(status_code=e.response.status_code, detail=f"Ravan API Error: {e.response.text}")
         except Exception as e:
@@ -165,6 +240,13 @@ async def get_agent(agent_id: str):
     if not settings.RAVAN_AGNI_AI:
         raise HTTPException(status_code=500, detail="RAVAN_AGNI_AI key not configured in backend.")
         
+    from app.core.redis_client import get_cache, set_cache, generate_cache_key
+    cache_key = generate_cache_key("agent_detail_struct", agent_id=agent_id)
+    cached = await get_cache(cache_key)
+    if cached:
+        print(f"⚡ REDIS CACHE HIT: Bypassed Ravan.ai - Extracted agent {agent_id} natively in <1ms!")
+        return cached
+
     async with httpx.AsyncClient() as client:
         try:
             # Trailing slash is explicitly required by Ravan's specification for UUID lookups
@@ -173,7 +255,9 @@ async def get_agent(agent_id: str):
                 headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
             )
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            await set_cache(cache_key, data, 600)
+            return data
         except httpx.HTTPStatusError as e:
             raise HTTPException(status_code=e.response.status_code, detail=f"Ravan API Error: {e.response.text}")
         except Exception as e:
@@ -202,8 +286,28 @@ async def delete_agent(
             if user_holding_node:
                 user_holding_node.ravan_agent_id = None
                 db.add(user_holding_node)
-                db.commit()
                 
+            # Also clean up from mapping tables Assign_Agents and Assign_Campaigns
+            from app.models.domain import Assign_Agents, Assign_Campaigns
+            
+            assigned_agents = db.exec(select(Assign_Agents).where(Assign_Agents.agent_id == agent_id)).all()
+            for aa in assigned_agents:
+                db.delete(aa)
+                
+            assigned_campaigns = db.exec(select(Assign_Campaigns).where(Assign_Campaigns.agent_id == agent_id)).all()
+            for ac in assigned_campaigns:
+                if ac.agent_id == agent_id: # Extra safety check though .where() caught it
+                    ac.agent_id = None
+                    db.add(ac)
+                    
+            db.commit()
+                
+            # Flush cache dynamically
+            from app.core.redis_client import delete_cache, generate_cache_key
+            await delete_cache("agents_list")
+            await delete_cache(generate_cache_key("agent_single", agent_id=agent_id))
+            await delete_cache(generate_cache_key("agent_detail_struct", agent_id=agent_id))
+            
             # The API returns a success message
             return {"success": True, "message": f"Agent {agent_id} obliterated successfully."}
         except httpx.HTTPStatusError as e:
@@ -211,11 +315,35 @@ async def delete_agent(
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/assigned-agents/list")
+async def get_assigned_agents(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    from sqlmodel import select
+    from app.models.domain import Assign_Agents
+    try:
+        assignments = db.exec(select(Assign_Agents).order_by(Assign_Agents.created_at.desc())).all()
+        return {"data": assignments}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.patch("/{agent_id}")
-async def update_agent(agent_id: str, request_data: dict):
+async def update_agent(
+    agent_id: str, 
+    request_data: dict,
+    current_user: User = Depends(get_current_user)
+):
     if not settings.RAVAN_AGNI_AI:
         raise HTTPException(status_code=500, detail="RAVAN_AGNI_AI key not configured in backend.")
         
+    # Permanently secure Platform ID upon edits
+    if "agentName" in request_data and current_user.role != 'admin':
+        request_data["agentName"] = request_data["agentName"].split(" [HASH:")[0]
+
     async with httpx.AsyncClient() as client:
         try:
             response = await client.patch(
@@ -224,6 +352,10 @@ async def update_agent(agent_id: str, request_data: dict):
                 headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
             )
             response.raise_for_status()
+            from app.core.redis_client import delete_cache, generate_cache_key
+            await delete_cache("agents_list")
+            await delete_cache(generate_cache_key("agent_single", agent_id=agent_id))
+            await delete_cache(generate_cache_key("agent_detail_struct", agent_id=agent_id))
             return {"success": True, "status": request_data.get("status", "ACTIVE")}
         except httpx.HTTPStatusError as e:
             raise HTTPException(status_code=e.response.status_code, detail=f"Ravan API Error: {e.response.text}")

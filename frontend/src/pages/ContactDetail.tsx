@@ -16,6 +16,57 @@ export function ContactDetail() {
     const [notesList, setNotesList] = useState<any[]>([]);
     const [activeTab, setActiveTab] = useState<'activity' | 'calls' | 'notes'>('activity');
 
+    // Action Modals State
+    const [editModalOpen, setEditModalOpen] = useState(false);
+    const [campaignModalOpen, setCampaignModalOpen] = useState(false);
+    const [callModalOpen, setCallModalOpen] = useState(false);
+    const [actionLoading, setActionLoading] = useState(false);
+
+    const [editForm, setEditForm] = useState({ name: '', phone: '', email: '', company: '' });
+    useEffect(() => {
+        if (detail?.contact && editModalOpen) {
+            setEditForm({ name: detail.contact.name || '', phone: detail.contact.phone || '', email: detail.contact.email || '', company: detail.contact.company || '' });
+        }
+    }, [detail, editModalOpen]);
+
+    const handleEditSave = async () => {
+        setActionLoading(true);
+        try {
+            await apiClient.patch(`/api/ravan/contacts/${id}`, editForm);
+            setEditModalOpen(false);
+            window.location.reload();
+        } catch (e) {
+            console.error(e);
+        }
+        setActionLoading(false);
+    };
+
+    const handleTriggerCampaign = async (selectedCampId: string) => {
+        setActionLoading(true);
+        try {
+            await apiClient.post(`/api/ravan/campaigns/${selectedCampId}/bind-contacts`, { contactIds: [id] });
+            setCampaignModalOpen(false);
+            window.location.reload();
+        } catch (e) {
+            console.error(e);
+        }
+        setActionLoading(false);
+    };
+
+    const handleCallContact = async (fromNumber: string) => {
+        setActionLoading(true);
+        try {
+            await apiClient.post(`/api/ravan/contacts/${id}/call`, { toNumber: contact?.phone, fromNumber });
+            setTimeout(() => {
+                setCallModalOpen(false);
+                window.location.reload();
+            }, 1000);
+        } catch (e) {
+            console.error(e);
+        }
+        setActionLoading(false);
+    };
+
     useEffect(() => {
         const fetchData = async () => {
             try {
@@ -121,9 +172,9 @@ export function ContactDetail() {
                 </div>
 
                 <div className="flex flex-wrap sm:flex-nowrap shrink-0 gap-3 w-full xl:w-auto mt-4 xl:mt-0 pt-4 xl:pt-0 border-t xl:border-0 border-gray-100 justify-stretch sm:justify-end">
-                    <Button variant="outline" className="flex-1 sm:flex-none text-gray-700 font-bold border-gray-200 hover:border-gray-300 shadow-sm"><FileText size={16} className="mr-2" /> Edit</Button>
-                    <Button variant="outline" className="flex-1 sm:flex-none text-gray-700 font-bold border-gray-200 hover:border-gray-300 shadow-sm">Campaign</Button>
-                    <Button className="bg-teal-600 hover:bg-teal-700 text-white font-bold border-0 flex-1 sm:flex-none shadow-sm"><PhoneCall size={16} className="mr-2 text-white" fill="white" /> Call</Button>
+                    <Button variant="outline" onClick={() => setEditModalOpen(true)} className="flex-1 sm:flex-none text-gray-700 font-bold border-gray-200 hover:border-gray-300 shadow-sm"><FileText size={16} className="mr-2" /> Edit</Button>
+                    <Button variant="outline" onClick={() => setCampaignModalOpen(true)} className="flex-1 sm:flex-none text-gray-700 font-bold border-gray-200 hover:border-gray-300 shadow-sm">Campaign</Button>
+                    <Button onClick={() => setCallModalOpen(true)} className="bg-teal-600 hover:bg-teal-700 text-white font-bold border-0 flex-1 sm:flex-none shadow-sm"><PhoneCall size={16} className="mr-2 text-white" fill="white" /> Call</Button>
                 </div>
             </div>
 
@@ -210,7 +261,7 @@ export function ContactDetail() {
                             <CardTitle className="text-sm font-bold text-gray-900">Campaign footprint</CardTitle>
                         </CardHeader>
                         <CardContent className="p-4 space-y-3">
-                            {campaignsList?.length > 0 ? campaignsList.map((camp: any) => (
+                            {campaignsList?.filter((c: any) => !c.name?.includes('[HASH:')).length > 0 ? campaignsList.filter((c: any) => !c.name?.includes('[HASH:')).map((camp: any) => (
                                 <div key={camp.id} className="border border-gray-100 rounded-lg p-3 hover:bg-gray-50/50 transition">
                                     <h4 className="text-sm font-bold text-gray-900">{camp.name}</h4>
                                     <div className="flex justify-between items-center mt-2 text-xs text-gray-500">
@@ -285,48 +336,58 @@ export function ContactDetail() {
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         {/* Latest Call */}
-                        {latestCall && (
-                            <Card className="shadow-sm border-l-4 border-l-green-500">
-                                <CardHeader className="bg-white pb-0">
-                                    <div className="flex justify-between items-start">
-                                        <div>
-                                            <CardTitle className="text-sm font-bold text-gray-900">{latestCall.campaignName}</CardTitle>
-                                            <p className="text-xs text-gray-500 mt-1">{new Date(latestCall.startedAt).toLocaleString()}</p>
-                                        </div>
+                        <Card className={`shadow-sm border-l-4 ${latestCall ? 'border-l-green-500' : 'border-l-gray-300'}`}>
+                            <CardHeader className="bg-white pb-0">
+                                <div className="flex justify-between items-start">
+                                    <div>
+                                        <CardTitle className="text-sm font-bold text-gray-900">Latest call</CardTitle>
+                                        <p className="text-xs text-gray-500 mt-1">Most recent outbound interaction</p>
+                                    </div>
+                                    {latestCall && (
                                         <span className="px-2 py-1 bg-green-50 text-green-700 text-[10px] font-bold rounded uppercase tracking-wider border border-green-100">
                                             {latestCall.status}
                                         </span>
-                                    </div>
-                                </CardHeader>
-                                <CardContent className="p-4 pt-4 space-y-4">
-                                    <div className="flex justify-between">
+                                    )}
+                                </div>
+                            </CardHeader>
+                            <CardContent className="p-4 pt-4 space-y-4">
+                                {latestCall ? (
+                                    <>
+                                        <h4 className="text-sm font-bold text-gray-900 mb-2 truncate max-w-full">{latestCall.campaignName || 'Direct Call'}</h4>
+                                        <div className="flex justify-between">
+                                            <div>
+                                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Duration</p>
+                                                <p className="text-lg font-bold text-gray-900">{formatTime(latestCall.durationSec || latestCall.duration_sec || 0)}</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Cost</p>
+                                                <p className="text-lg font-bold text-gray-900">${latestCall.costTotal || '0.00'}</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <div>
+                                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">From</p>
+                                                <p className="text-sm font-mono text-gray-600">{latestCall.callerNumber || 'N/A'}</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">To</p>
+                                                <p className="text-sm font-mono text-gray-600">{latestCall.calleeNumber || contact.phone}</p>
+                                            </div>
+                                        </div>
                                         <div>
-                                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Duration</p>
-                                            <p className="text-lg font-bold text-gray-900">{formatTime(latestCall.durationSec || latestCall.duration_sec || 0)}</p>
+                                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Disconnect Reason</p>
+                                            <p className="text-sm text-gray-700 capitalize">{latestCall.disconnectReason?.replace('_', ' ') || 'Unknown'}</p>
                                         </div>
-                                        <div className="text-right">
-                                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Cost</p>
-                                            <p className="text-lg font-bold text-gray-900">${latestCall.costTotal}</p>
-                                        </div>
+                                        <Button variant="link" className="text-teal-600 p-0 h-auto">View call details ↗</Button>
+                                    </>
+                                ) : (
+                                    <div className="flex flex-col items-center justify-center p-6 text-gray-400">
+                                        <Phone size={32} className="mb-2 opacity-50" />
+                                        <p className="text-sm font-medium">No recorded calls yet.</p>
                                     </div>
-                                    <div className="flex justify-between">
-                                        <div>
-                                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">From</p>
-                                            <p className="text-sm font-mono text-gray-600">{latestCall.callerNumber}</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">To</p>
-                                            <p className="text-sm font-mono text-gray-600">{latestCall.calleeNumber}</p>
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Disconnect Reason</p>
-                                        <p className="text-sm text-gray-700 capitalize">{latestCall.disconnectReason?.replace('_', ' ')}</p>
-                                    </div>
-                                    <Button variant="link" className="text-teal-600 p-0 h-auto">View call details ↗</Button>
-                                </CardContent>
-                            </Card>
-                        )}
+                                )}
+                            </CardContent>
+                        </Card>
 
                         {/* Latest Activity */}
                         <Card className="shadow-sm border-l-4 border-l-pink-500">
@@ -438,6 +499,80 @@ export function ContactDetail() {
                     )}
                 </CardContent>
             </Card>
+
+            {/* ACTION MODALS */}
+            {editModalOpen && (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col">
+                        <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                            <h3 className="text-lg font-black text-gray-900 flex items-center gap-2"><User size={18} className="text-teal-600" /> Edit Contact</h3>
+                            <button onClick={() => setEditModalOpen(false)} className="text-gray-400 hover:text-gray-900 bg-white p-1 rounded-md border border-gray-200 shadow-sm">&times;</button>
+                        </div>
+                        <div className="p-6 space-y-4">
+                            <div><label className="text-xs font-bold text-gray-700 uppercase tracking-widest mb-1.5 block">Full Name</label><input className="w-full text-sm p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-teal-500 outline-none" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} /></div>
+                            <div><label className="text-xs font-bold text-gray-700 uppercase tracking-widest mb-1.5 block">Phone Number</label><input className="w-full text-sm p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-teal-500 outline-none font-mono" value={editForm.phone} onChange={e => setEditForm({ ...editForm, phone: e.target.value })} /></div>
+                            <div><label className="text-xs font-bold text-gray-700 uppercase tracking-widest mb-1.5 block">Email Map</label><input className="w-full text-sm p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-teal-500 outline-none" value={editForm.email} onChange={e => setEditForm({ ...editForm, email: e.target.value })} /></div>
+                        </div>
+                        <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
+                            <Button variant="outline" onClick={() => setEditModalOpen(false)}>Cancel</Button>
+                            <Button className="bg-teal-600 text-white font-bold" onClick={handleEditSave} disabled={actionLoading}>{actionLoading ? "Saving..." : "Update Record"}</Button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {campaignModalOpen && (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col">
+                        <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                            <h3 className="text-lg font-black text-gray-900 flex items-center gap-2"><FileText size={18} className="text-teal-600" /> Execute Campaign Trigger</h3>
+                            <button onClick={() => setCampaignModalOpen(false)} className="text-gray-400 hover:text-gray-900 bg-white p-1 rounded-md border border-gray-200 shadow-sm">&times;</button>
+                        </div>
+                        <div className="p-6">
+                            <p className="text-sm text-gray-600 mb-4 tracking-tight">Select an active dashboard campaign to immediately bind and execute an outbound sequence towards <strong className="font-bold text-gray-900">{contact.name}</strong>.</p>
+
+                            <select className="w-full p-3 border border-gray-200 rounded-xl font-bold text-gray-700 focus:ring-2 focus:ring-teal-500 outline-none cursor-pointer bg-white" onChange={(e) => handleTriggerCampaign(e.target.value)}>
+                                <option value="">-- Click to Target Campaign --</option>
+                                {campaignsList.filter((c: any) => !c.name.includes('[HASH:')).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {callModalOpen && (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col relative">
+                        {actionLoading && <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-10 flex flex-col justify-center items-center">
+                            <div className="w-16 h-16 border-4 border-teal-100 border-t-teal-600 rounded-full animate-spin mb-3"></div>
+                            <span className="text-teal-800 font-bold tracking-widest text-xs uppercase animate-pulse">Running Call Session...</span>
+                        </div>}
+
+                        <div className="px-6 py-5 border-b border-gray-100 flex justify-between items-center bg-teal-50/50">
+                            <h3 className="text-lg font-black text-teal-900 flex items-center gap-2"><PhoneCall size={18} className="text-teal-600 animate-pulse" /> Instant Neural Dispatch</h3>
+                            <button onClick={() => setCallModalOpen(false)} className="text-teal-400 hover:text-teal-900 bg-white p-1 rounded-xl border border-teal-100 shadow-sm">&times;</button>
+                        </div>
+                        <div className="p-6 space-y-5 relative">
+                            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 text-center relative overflow-hidden">
+                                <div className="absolute top-0 right-0 w-24 h-24 bg-teal-500/10 rounded-full blur-2xl -mt-10 -mr-10"></div>
+                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5 flex items-center justify-center gap-1"><User size={12} /> Handshake Target</p>
+                                <p className="text-xl font-black text-gray-900 tracking-tight">{contact.name}</p>
+                                <p className="text-sm font-mono text-gray-500 mt-1">{contact.phone}</p>
+                            </div>
+
+                            <form onSubmit={(e) => { e.preventDefault(); handleCallContact((e.target as any).fromNumber.value); }}>
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 block">From Number (Ravan Mask)</label>
+                                    <input name="fromNumber" required className="w-full text-sm p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-teal-500 outline-none font-mono tracking-wide placeholder-gray-300 transition-colors" placeholder="+914441019..." />
+                                </div>
+                                <Button type="submit" className="w-full mt-6 bg-teal-600 hover:bg-teal-700 hover:scale-[1.02] shadow-lg shadow-teal-500/20 text-white font-black py-6 rounded-xl text-lg flex items-center justify-center gap-3 transition-all">
+                                    <Phone size={20} fill="white" /> Connect Now
+                                </Button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            )}
         </MainLayout>
     );
 }

@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { MainLayout } from '../components/layout/MainLayout';
-import { Phone, Loader2, Search, Plus, Edit2, Trash2, Key, CheckCircle } from 'lucide-react';
+import { Loader2, Search, Plus, Edit2, Trash2, Coins, CreditCard } from 'lucide-react';
 import { apiClient } from '../api/client';
 import toast from 'react-hot-toast';
 
-export function AssignPhone() {
+export function AssignCredits() {
     const [loading, setLoading] = useState(true);
     const [users, setUsers] = useState<any[]>([]);
 
@@ -14,7 +14,7 @@ export function AssignPhone() {
 
     // Form States
     const [allocationCustomer, setAllocationCustomer] = useState<number | null>(null);
-    const [phoneUUID, setPhoneUUID] = useState<string>("");
+    const [creditsConfig, setCreditsConfig] = useState<string>("");
     const [isAllocating, setIsAllocating] = useState(false);
     const [isEditing, setIsEditing] = useState(false);
 
@@ -36,53 +36,54 @@ export function AssignPhone() {
     const openCreateModal = () => {
         setIsEditing(false);
         setAllocationCustomer(null);
-        setPhoneUUID("");
+        setCreditsConfig("");
         setIsModalOpen(true);
     };
 
     const openEditModal = (u: any) => {
         setIsEditing(true);
         setAllocationCustomer(u.id);
-        setPhoneUUID(u.ravan_phone_number_id || "");
+        setCreditsConfig(u.allocated_credits ? String(u.allocated_credits) : "");
         setIsModalOpen(true);
     };
 
     const handleModalAllocate = async () => {
-        if (!allocationCustomer || !phoneUUID.trim()) return;
+        if (!allocationCustomer) return;
         setIsAllocating(true);
         try {
+            const parsedCredits = parseFloat(creditsConfig) || 0.0;
+
             await apiClient.patch(`/auth/users/${allocationCustomer}`, {
-                ravan_phone_number_id: phoneUUID.trim()
+                allocated_credits: parsedCredits
             });
 
-            // sync global lists natively mapping dynamically back!
-            setUsers(users.map(u => u.id === allocationCustomer ? { ...u, ravan_phone_number_id: phoneUUID.trim() } : u));
-            toast.success(isEditing ? "Successfully updated Phone Number binding!" : "Successfully bound Phone Number to User!");
+            setUsers(users.map(u => u.id === allocationCustomer ? { ...u, allocated_credits: parsedCredits } : u));
+            toast.success(isEditing ? "Successfully updated credits mapping!" : "Successfully assigned credits!");
             setIsModalOpen(false);
         } catch (error) {
             console.error("Allocation mapping sync failed", error);
-            toast.error("Failed to dynamically bound Phone Number ID.");
+            toast.error("Failed to dynamically bound Credits.");
         } finally {
             setIsAllocating(false);
         }
     };
 
     const handleDeleteAllocation = async (userId: number) => {
-        if (!window.confirm("Are you sure you want to revoke this customer's phone number assignment? This will cause OUTBOUND campaigns to fallback to default.")) return;
+        if (!window.confirm("Are you sure you want to revoke this customer's credit pool?")) return;
 
         try {
             await apiClient.patch(`/auth/users/${userId}`, {
-                ravan_phone_number_id: ""
+                allocated_credits: 0.0
             });
-            setUsers(users.map(u => u.id === userId ? { ...u, ravan_phone_number_id: null } : u));
-            toast.success("Phone Number allocation permanently revoked.");
+            setUsers(users.map(u => u.id === userId ? { ...u, allocated_credits: 0 } : u));
+            toast.success("Credits permanently revoked.");
         } catch (e) {
-            toast.error("Failed to revoke allocation");
+            toast.error("Failed to revoke credits");
         }
     };
 
-    // Derived states
-    const assignedUsers = users.filter(u => u.role !== 'admin' && u.ravan_phone_number_id);
+    // Derived states - ONLY filter those who have credits
+    const assignedUsers = users.filter(u => u.role !== 'admin' && u.allocated_credits > 0);
     const filteredUsers = assignedUsers.filter(u =>
         (u.name && u.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
         (u.email && u.email.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -91,14 +92,15 @@ export function AssignPhone() {
     return (
         <MainLayout>
             <div className="w-full bg-slate-50/50 rounded-2xl p-6 md:p-8 min-h-[85vh] flex flex-col relative">
+
                 {/* Header Navbar Actions */}
                 <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
                     <div>
                         <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-gray-900 mb-2">
-                            Assigned Phone Numbers
+                            Global Allocated Credits
                         </h1>
                         <p className="text-gray-500 text-sm md:text-base max-w-lg">
-                            Monitor and manage your active customer phone number ID bindings for caller IDs.
+                            Monitor and assign usage credit boundaries explicitly for calling pipelines.
                         </p>
                     </div>
 
@@ -116,18 +118,18 @@ export function AssignPhone() {
 
                         <button
                             onClick={openCreateModal}
-                            className="w-full sm:w-auto px-6 py-2.5 bg-green-600 hover:bg-green-700 text-white text-sm font-bold rounded-xl shadow-sm transition-colors flex items-center justify-center gap-2 shrink-0"
+                            className="w-full sm:w-auto px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl shadow-sm transition-colors flex items-center justify-center gap-2 shrink-0"
                         >
-                            <Plus size={18} /> Assign-Phone
+                            <Plus size={18} /> Assign Credits Target
                         </button>
                     </div>
                 </div>
 
-                {/* Horizontal Grid Fitting */}
+                {/* Horizontal 3 Grid Fitting */}
                 {loading ? (
                     <div className="flex flex-col items-center justify-center py-24 flex-1">
-                        <Loader2 className="w-10 h-10 text-green-600 animate-spin mb-6" />
-                        <h3 className="text-xl font-bold text-gray-900 mb-2">Fetching Assignments...</h3>
+                        <Loader2 className="w-10 h-10 text-emerald-600 animate-spin mb-6" />
+                        <h3 className="text-xl font-bold text-gray-900 mb-2">Fetching Allocations...</h3>
                     </div>
                 ) : filteredUsers.length > 0 ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -135,8 +137,8 @@ export function AssignPhone() {
                             <div key={u.id} className="bg-white border border-gray-200 rounded-[20px] p-5 shadow-sm hover:shadow-md transition-all flex flex-col group">
                                 <div className="flex items-start justify-between mb-4">
                                     <div className="flex items-center gap-3">
-                                        <div className="w-12 h-12 bg-green-50 border border-green-100 rounded-xl flex items-center justify-center shrink-0">
-                                            <span className="text-green-600 font-black text-lg">{u.name?.charAt(0).toUpperCase()}</span>
+                                        <div className="w-12 h-12 bg-emerald-50 border border-emerald-100 rounded-xl flex items-center justify-center shrink-0">
+                                            <span className="text-emerald-600 font-black text-lg">{u.name?.charAt(0).toUpperCase()}</span>
                                         </div>
                                         <div className="flex flex-col overflow-hidden">
                                             <h3 className="text-base font-bold text-gray-900 truncate">{u.name}</h3>
@@ -146,16 +148,12 @@ export function AssignPhone() {
                                 </div>
 
                                 <div className="bg-gray-50/80 rounded-xl p-4 flex flex-col gap-3 mb-5 border border-gray-100/50">
-                                    <div className="flex flex-col gap-1.5">
+                                    <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2 text-gray-500">
-                                            <Phone className="w-4 h-4 text-green-500" />
-                                            <span className="text-xs font-bold uppercase tracking-wider">Mobile Number</span>
+                                            <Coins className="w-4 h-4 text-emerald-500" />
+                                            <span className="text-xs font-bold uppercase tracking-wider">Credits Pool Limits</span>
                                         </div>
-                                        <span className="text-xs font-mono font-black text-gray-900 break-all bg-white border border-gray-100 p-2 rounded-lg">{u.ravan_phone_number_id}</span>
-                                    </div>
-
-                                    <div className="flex items-center gap-1.5 text-[10px] text-green-600 font-bold uppercase tracking-widest mt-1">
-                                        <CheckCircle size={12} /> Bound Caller ID
+                                        <span className="text-sm font-black text-emerald-600">{Number(u.allocated_credits || 0).toLocaleString()} Coins</span>
                                     </div>
                                 </div>
 
@@ -163,9 +161,9 @@ export function AssignPhone() {
                                 <div className="flex items-center gap-2 mt-auto pt-2 border-t border-gray-100 opacity-80 group-hover:opacity-100 transition-opacity">
                                     <button
                                         onClick={() => openEditModal(u)}
-                                        className="flex-1 flex items-center justify-center gap-1.5 py-2 hover:bg-blue-50 text-gray-600 hover:text-blue-600 rounded-lg transition-colors text-xs font-bold"
+                                        className="flex-1 flex items-center justify-center gap-1.5 py-2 hover:bg-emerald-50 text-gray-600 hover:text-emerald-600 rounded-lg transition-colors text-xs font-bold"
                                     >
-                                        <Edit2 className="w-3.5 h-3.5" /> Edit UUID
+                                        <Edit2 className="w-3.5 h-3.5" /> Edit Pool
                                     </button>
                                     <div className="w-px h-4 bg-gray-200"></div>
                                     <button
@@ -181,71 +179,83 @@ export function AssignPhone() {
                 ) : (
                     <div className="flex flex-col items-center justify-center py-20 px-4 text-center border-2 border-dashed border-gray-200 rounded-2xl bg-white flex-1">
                         <div className="w-16 h-16 bg-gray-50 border border-gray-200 rounded-full flex items-center justify-center mb-4 shadow-sm">
-                            <Phone size={24} className="text-gray-400" />
+                            <CreditCard size={24} className="text-gray-400" />
                         </div>
-                        <h3 className="text-lg font-bold text-gray-900 mb-2">No active Phone assignments</h3>
+                        <h3 className="text-lg font-bold text-gray-900 mb-2">No assigned credits</h3>
                         <p className="text-gray-500 max-w-sm mx-auto mb-6 text-sm">
-                            You have not assigned any phone number IDs to your customers yet. Click '+ Assign-Phone' above to begin.
+                            You have not distributed any usage credits explicitly to your customers yet. Click 'Assign Credits Target' above to begin.
                         </p>
                     </div>
                 )}
 
                 {/* Interactive Allocation Overlay Block */}
                 {isModalOpen && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-gray-900/60 backdrop-blur-sm">
-                        <div className="bg-white rounded-[24px] shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 flex flex-col relative animate-in fade-in zoom-in-95 duration-200">
+                    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-gray-900/40 backdrop-blur-sm">
+                        <div className="bg-white rounded-[20px] shadow-2xl w-full max-w-[400px] overflow-hidden border border-gray-100 flex flex-col relative animate-in fade-in zoom-in-95 duration-200">
 
-                            <div className="p-6 flex flex-col items-center relative">
-                                <div className="mb-4">
-                                    <Phone className="w-10 h-10 text-gray-800" strokeWidth={1.5} />
+                            {/* Minimal Professional Header */}
+                            <div className="px-6 py-5 border-b border-gray-100 flex items-center gap-4 relative">
+                                <div className="absolute top-0 left-0 w-full h-1 bg-emerald-500"></div>
+                                <div className="w-10 h-10 bg-emerald-50 rounded-full flex items-center justify-center border border-emerald-100 shrink-0">
+                                    <Coins className="w-5 h-5 text-emerald-600" />
                                 </div>
-                                <h2 className="text-xl font-black text-gray-900 tracking-tight text-center">{isEditing ? 'Modify Phone Assignment' : 'Assign Target Phone Number'}</h2>
+                                <div>
+                                    <h2 className="text-lg font-bold text-gray-900 tracking-tight leading-tight">{isEditing ? 'Update Credits' : 'Deposit Credits'}</h2>
+                                    <p className="text-[11px] font-medium text-gray-500 mt-0.5">Assign calling capacity matrix to users.</p>
+                                </div>
                             </div>
 
-                            <div className="px-6 pb-6 flex flex-col gap-5">
+                            {/* Form Input Area */}
+                            <div className="p-6 flex flex-col gap-5">
+                                {/* Customer Selection */}
                                 <div>
-                                    <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2 block pl-1">Target User</label>
+                                    <label className="text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 block">Target Customer</label>
                                     <select
-                                        className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-900 transition-all cursor-pointer appearance-none shadow-sm"
+                                        className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all cursor-pointer appearance-none shadow-sm"
                                         value={allocationCustomer || ''}
                                         onChange={(e) => setAllocationCustomer(Number(e.target.value))}
                                         disabled={isEditing}
                                     >
-                                        <option value="" disabled className="text-gray-400">-- Choose target client --</option>
+                                        <option value="" disabled className="text-gray-400">--- Select Client ---</option>
                                         {users.filter(u => u.role !== 'admin').map((u) => (
-                                            <option key={u.id} value={u.id}>{u.name} (UUID: {u.identity_hash ? u.identity_hash.substring(0, 8) : 'Pending'})</option>
+                                            <option key={u.id} value={u.id}>{u.name} (UUID: {u.ravan_agent_id ? u.ravan_agent_id.substring(0, 8) : 'Pending'})</option>
                                         ))}
                                     </select>
                                 </div>
 
-                                <div>
-                                    <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2 block pl-1">Mobile Number (E.164)</label>
-                                    <input
-                                        type="text"
-                                        className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900 transition-all font-mono shadow-sm"
-                                        placeholder="e.g. +14155552671"
-                                        value={phoneUUID}
-                                        onChange={(e) => setPhoneUUID(e.target.value)}
-                                    />
+                                <div className="grid grid-cols-1 gap-4">
+                                    <div>
+                                        <label className="text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 block">Distribute Native Credits Pool</label>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-semibold text-emerald-600 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all font-mono shadow-sm"
+                                            placeholder="E.g. 5000 coins"
+                                            value={creditsConfig}
+                                            onChange={(e) => setCreditsConfig(e.target.value)}
+                                        />
+                                    </div>
                                 </div>
                             </div>
 
-                            <div className="px-6 pb-6 pt-2 flex flex-col gap-3">
-                                <button
-                                    onClick={handleModalAllocate}
-                                    disabled={!allocationCustomer || !phoneUUID.trim() || isAllocating}
-                                    className={`w-full py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-colors ${!allocationCustomer || !phoneUUID.trim() || isAllocating ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-gray-900 hover:bg-black text-white shadow-md'}`}
-                                >
-                                    {isAllocating ? <Loader2 className="w-4 h-4 animate-spin" /> : (isEditing ? <Edit2 className="w-4 h-4" /> : <CheckCircle className="w-4 h-4" />)}
-                                    Save Binding
-                                </button>
+                            {/* Actions Mapping */}
+                            <div className="px-6 py-4 bg-gray-50/50 border-t border-gray-100 flex items-center justify-end gap-3">
                                 <button
                                     onClick={() => setIsModalOpen(false)}
-                                    className="w-full py-2.5 bg-white border border-transparent hover:border-gray-200 rounded-xl text-gray-500 text-sm font-bold transition-all"
+                                    className="px-5 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg text-sm font-bold shadow-sm hover:bg-gray-50 transition-colors"
                                 >
                                     Cancel
                                 </button>
+                                <button
+                                    onClick={handleModalAllocate}
+                                    disabled={!allocationCustomer || !creditsConfig || isAllocating}
+                                    className={`px-5 py-2 rounded-lg font-bold text-sm min-w-[120px] shadow-sm transition-colors flex items-center justify-center gap-2 ${!allocationCustomer || !creditsConfig || isAllocating ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200' : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20'}`}
+                                >
+                                    {isAllocating ? <Loader2 className="w-4 h-4 animate-spin" /> : (isEditing ? 'Save Limits' : 'Deposit Matrix')}
+                                </button>
                             </div>
+
                         </div>
                     </div>
                 )}
@@ -253,4 +263,3 @@ export function AssignPhone() {
         </MainLayout>
     );
 }
-

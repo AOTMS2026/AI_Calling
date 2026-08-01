@@ -9,6 +9,7 @@ export function Agents() {
     const [activeTab, setActiveTab] = useState('All');
     const [searchQuery, setSearchQuery] = useState('');
     const [agentsList, setAgentsList] = useState<any[]>([]);
+    const [agentQuota, setAgentQuota] = useState<number>(1);
     const [loading, setLoading] = useState(true);
     const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
     const [agentToDelete, setAgentToDelete] = useState<string | null>(null);
@@ -40,6 +41,20 @@ export function Agents() {
                         extractedArray = possibleArrays[0] as any[];
                     }
                 }
+            }
+
+            const meRes = await apiClient.get('/auth/me').catch(() => null);
+            const user = meRes?.data;
+            if (user) {
+                let activeQuota = 1;
+                if (typeof user.agent_quota === 'number' && user.agent_quota > 0) {
+                    activeQuota = user.agent_quota;
+                } else if (user.role === 'admin') {
+                    activeQuota = 999;
+                }
+                setAgentQuota(activeQuota);
+
+                // Backend natively scopes and limits results fully unconditionally, no frontend override filtering needed!
             }
 
             setAgentsList(extractedArray);
@@ -114,7 +129,6 @@ export function Agents() {
             // Revert state if failed
             setAgentsList(prev => prev.map(a => a.id === agentId ? { ...a, status: currentStatus } : a));
             toast.error("Failed to sync node status with Ravan.ai");
-            toast.error("Failed to sync node status with Ravan.ai");
         }
     };
 
@@ -138,12 +152,17 @@ export function Agents() {
                         </p>
                     </div>
 
-                    <button
-                        onClick={() => navigate('/agents/new')}
-                        className="w-full md:w-auto px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-xl shadow-sm transition-colors flex items-center justify-center gap-2"
-                    >
-                        <Plus size={18} /> New Agent
-                    </button>
+                    <div className="flex flex-col md:items-end gap-2 w-full md:w-auto">
+                        <span className={`text-[12px] font-bold uppercase tracking-widest ${agentsList.length >= agentQuota ? 'text-red-500' : 'text-gray-400'}`}>
+                            Agents Limits {agentsList.length}/{agentQuota} {agentsList.length >= agentQuota && '.. Upgrade'}
+                        </span>
+                        <button
+                            onClick={() => agentsList.length >= agentQuota ? toast.error("Limits Reached.. Upgrade to spin up more nodes.") : navigate('/agents/new')}
+                            className={`w-full md:w-auto px-6 py-3 text-white text-sm font-bold rounded-xl shadow-sm transition-colors flex items-center justify-center gap-2 ${agentsList.length >= agentQuota ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+                        >
+                            <Plus size={18} /> New Agent
+                        </button>
+                    </div>
                 </div>
 
                 {/* Advanced Tab Bar */}
@@ -192,7 +211,7 @@ export function Agents() {
                                         </div>
                                         <div className="flex flex-col overflow-hidden">
                                             <h3 className="text-base font-bold text-gray-900 tracking-tight leading-tight truncate">
-                                                {agent.agentName || 'AI Assistant'}
+                                                {(agent.agentName || 'AI Assistant').split(' [HASH:')[0]}
                                             </h3>
                                             <span className="text-[11px] font-mono text-gray-400 truncate mt-0.5">{agent.id.split('-')[0]}</span>
                                         </div>
@@ -233,7 +252,7 @@ export function Agents() {
                                             <Bot className="w-3.5 h-3.5" />
                                             <span className="text-[12px] font-semibold text-gray-500">Agent name</span>
                                         </div>
-                                        <span className="text-[12px] font-bold text-gray-900 max-w-[100px] truncate block text-right">{agent.agentName || 'Unassigned'}</span>
+                                        <span className="text-[12px] font-bold text-gray-900 max-w-[100px] truncate block text-right">{(agent.agentName || 'Unassigned').split(' [HASH:')[0]}</span>
                                     </div>
                                 </div>
 

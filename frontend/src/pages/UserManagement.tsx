@@ -39,7 +39,9 @@ export function UserManagement() {
                 role: user.role,
                 ravan_agent_id: user.ravan_agent_id,
                 ravan_api_key: user.ravan_api_key,
-                ravan_org_id: user.ravan_org_id
+                ravan_org_id: user.ravan_org_id,
+                allocated_credits: user.allocated_credits !== '' ? Number(user.allocated_credits) : null,
+                agent_quota: user.agent_quota !== '' ? Number(user.agent_quota) : 0
             });
             setSuccessId(user.id);
             setTimeout(() => setSuccessId(null), 2000);
@@ -58,8 +60,7 @@ export function UserManagement() {
     const filteredUsers = users.filter((u) =>
         (u.name && u.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
         (u.email && u.email.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (u.phone && u.phone.includes(searchQuery)) ||
-        (u.identity_hash && u.identity_hash.includes(searchQuery))
+        (u.phone && u.phone.includes(searchQuery))
     );
 
     const handleModalAllocate = async () => {
@@ -147,20 +148,8 @@ export function UserManagement() {
                                             <div className="inline-flex items-center gap-2 px-2.5 py-1.5 bg-gray-50 border border-gray-200 rounded-lg group">
                                                 <Shield className="w-3.5 h-3.5 text-gray-400" />
                                                 <span className="text-[10px] font-mono font-bold text-gray-500 uppercase tracking-widest">
-                                                    ID Hash: <span className="text-blue-600">{u.identity_hash ? `${u.identity_hash.substring(0, 16)}...` : 'PENDING'}</span>
+                                                    Agent ID: <span className="text-blue-600">{u.ravan_agent_id ? `${u.ravan_agent_id.substring(0, 16)}...` : 'PENDING'}</span>
                                                 </span>
-                                                {u.identity_hash && (
-                                                    <button
-                                                        onClick={() => {
-                                                            navigator.clipboard.writeText(u.identity_hash);
-                                                            toast.success("Identity hash copied to clipboard!", { style: { fontSize: '12px', fontWeight: 'bold' } });
-                                                        }}
-                                                        className="text-gray-400 hover:text-blue-600 transition-colors opacity-0 group-hover:opacity-100 p-0.5 ml-1"
-                                                        title="Copy full hash"
-                                                    >
-                                                        <Copy className="w-3 h-3" />
-                                                    </button>
-                                                )}
                                             </div>
                                         </div>
                                     </div>
@@ -168,20 +157,6 @@ export function UserManagement() {
 
                                 <div className="flex flex-col gap-3 w-full xl:w-auto xl:flex-1">
                                     <div className="flex flex-col md:flex-row gap-4 w-full">
-                                        <div className="w-full xl:w-64">
-                                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5 block pl-1">Target Ravan Agent UUID</label>
-                                            <div className="relative">
-                                                <Bot className="w-4 h-4 text-blue-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                                                <input
-                                                    type="text"
-                                                    value={u.ravan_agent_id || ''}
-                                                    onChange={(e) => updateLocalUser(u.id, "ravan_agent_id", e.target.value)}
-                                                    placeholder="Unassigned (Empty)"
-                                                    className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-mono text-[12px]"
-                                                />
-                                            </div>
-                                        </div>
-
                                         <div className="w-full md:w-32">
                                             <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5 block pl-1">Role</label>
                                             <select
@@ -192,6 +167,28 @@ export function UserManagement() {
                                                 <option value="customer">Customer</option>
                                                 <option value="admin">Administrator</option>
                                             </select>
+                                        </div>
+
+                                        <div className="w-full md:w-32">
+                                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5 block pl-1">Agent Quota</label>
+                                            <input
+                                                type="number"
+                                                value={u.agent_quota !== undefined ? u.agent_quota : ''}
+                                                onChange={(e) => updateLocalUser(u.id, "agent_quota", e.target.value)}
+                                                placeholder="e.g. 5"
+                                                className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#0a8ea0]/20 focus:border-[#0a8ea0] transition-all"
+                                            />
+                                        </div>
+
+                                        <div className="w-full md:w-32">
+                                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5 block pl-1">Assign Credits</label>
+                                            <input
+                                                type="number"
+                                                value={u.allocated_credits !== undefined ? u.allocated_credits : ''}
+                                                onChange={(e) => updateLocalUser(u.id, "allocated_credits", e.target.value)}
+                                                placeholder="e.g. 500"
+                                                className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                                            />
                                         </div>
                                     </div>
                                 </div>
@@ -248,7 +245,7 @@ export function UserManagement() {
                                 >
                                     <option value="" disabled className="text-gray-400">-- Choose target client --</option>
                                     {users.filter(u => u.role !== 'admin').map((u) => (
-                                        <option key={u.id} value={u.id}>{u.name} (UUID: {u.identity_hash ? u.identity_hash.substring(0, 8) : 'Pending'})</option>
+                                        <option key={u.id} value={u.id}>{u.name} (UUID: {u.ravan_agent_id ? u.ravan_agent_id.substring(0, 8) : 'Pending'})</option>
                                     ))}
                                 </select>
                             </div>

@@ -160,27 +160,12 @@ export function AssignAgent() {
                                 </div>
 
                                 <div className="bg-gray-50/80 rounded-xl p-4 flex flex-col gap-3 mb-5 border border-gray-100/50">
-                                    <div className="flex flex-col gap-1.5 mb-2 border-b border-gray-200 pb-3">
-                                        <div className="flex items-center gap-2 text-gray-500">
-                                            <Bot className="w-4 h-4 text-blue-500" />
-                                            <span className="text-xs font-bold uppercase tracking-wider">Assigned Agent ID</span>
-                                        </div>
-                                        <span className="text-[10px] font-mono font-black text-gray-900 break-all bg-white border border-gray-100 p-2 rounded-lg">{u.ravan_agent_id || 'Unassigned'}</span>
-                                    </div>
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2 text-gray-500">
                                             <Bot className="w-4 h-4 text-gray-400" />
-                                            <span className="text-xs font-bold uppercase tracking-wider">Agents Quota</span>
+                                            <span className="text-xs font-bold uppercase tracking-wider">Agents Quota Allowed</span>
                                         </div>
                                         <span className="text-sm font-black text-gray-900">{u.agent_quota || 0} Nodes</span>
-                                    </div>
-                                    <div className="h-px w-full bg-gray-200"></div>
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-2 text-gray-500">
-                                            <Coins className="w-4 h-4 text-emerald-500" />
-                                            <span className="text-xs font-bold uppercase tracking-wider">Credits Pool</span>
-                                        </div>
-                                        <span className="text-sm font-black text-emerald-600">{Number(u.allocated_credits || 0).toLocaleString()}</span>
                                     </div>
                                 </div>
 
@@ -217,90 +202,68 @@ export function AssignAgent() {
 
                 {/* Interactive Allocation Overlay Block */}
                 {isModalOpen && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-gray-900/60 backdrop-blur-sm">
-                        <div className="bg-white rounded-[24px] shadow-2xl w-full max-w-lg overflow-hidden border border-gray-100 flex flex-col relative animate-in fade-in zoom-in-95 duration-200">
+                    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-gray-900/40 backdrop-blur-sm">
+                        <div className="bg-white rounded-[20px] shadow-2xl w-full max-w-[400px] overflow-hidden border border-gray-100 flex flex-col relative animate-in fade-in zoom-in-95 duration-200">
 
-                            {/* Header Area */}
-                            <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex flex-col items-center relative">
-                                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-emerald-500"></div>
-                                <div className="w-12 h-12 bg-blue-100 border border-blue-200 rounded-full flex items-center justify-center mb-3 shadow-inner mt-2">
-                                    <Bot className="w-6 h-6 text-blue-600" />
+                            {/* Minimal Professional Header */}
+                            <div className="px-6 py-5 border-b border-gray-100 flex items-center gap-4 relative">
+                                <div className="absolute top-0 left-0 w-full h-1 bg-blue-600"></div>
+                                <div className="w-10 h-10 bg-blue-50 rounded-full flex items-center justify-center border border-blue-100 shrink-0">
+                                    <Bot className="w-5 h-5 text-blue-600" />
                                 </div>
-                                <h2 className="text-xl font-black text-gray-900 tracking-tight text-center">{isEditing ? 'Modify Target Capacity' : 'Allocate New Capacity'}</h2>
+                                <div>
+                                    <h2 className="text-lg font-bold text-gray-900 tracking-tight leading-tight">{isEditing ? 'Update Quota' : 'Assign Quota'}</h2>
+                                    <p className="text-[11px] font-medium text-gray-500 mt-0.5">Define node capacity limits per user.</p>
+                                </div>
                             </div>
 
                             {/* Form Input Area */}
-                            <div className="p-6 flex flex-col gap-6">
+                            <div className="p-6 flex flex-col gap-5">
                                 {/* Customer Selection */}
                                 <div>
-                                    <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2 block pl-1">Target Customer</label>
+                                    <label className="text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 block">Target Customer</label>
                                     <select
-                                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all cursor-pointer appearance-none"
+                                        className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all cursor-pointer appearance-none shadow-sm"
                                         value={allocationCustomer || ''}
                                         onChange={(e) => setAllocationCustomer(Number(e.target.value))}
                                         disabled={isEditing}
                                     >
-                                        <option value="" disabled className="text-gray-400">-- Choose target client --</option>
+                                        <option value="" disabled className="text-gray-400">--- Select Client ---</option>
                                         {users.filter(u => u.role !== 'admin').map((u) => (
-                                            <option key={u.id} value={u.id}>{u.name} (UUID: {u.identity_hash ? u.identity_hash.substring(0, 8) : 'Pending'})</option>
+                                            <option key={u.id} value={u.id}>{u.name} (UUID: {u.ravan_agent_id ? u.ravan_agent_id.substring(0, 8) : 'Pending'})</option>
                                         ))}
                                     </select>
                                 </div>
 
-                                <div>
-                                    <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2 block pl-1">Target Agent UUID</label>
-                                    <input
-                                        type="text"
-                                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-mono"
-                                        placeholder="e.g. 019f85d4-0222-759d-939e-0f6b91065c94"
-                                        value={agentUUIDConfig}
-                                        onChange={(e) => setAgentUUIDConfig(e.target.value)}
-                                    />
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="grid grid-cols-1 gap-4">
                                     <div>
-                                        <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2 block pl-1">Agent Quota Limits</label>
+                                        <label className="text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 block">Agent Quota Allowed</label>
                                         <input
                                             type="number"
                                             min="0"
-                                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-mono"
-                                            placeholder="E.g. 5"
+                                            className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-semibold text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-mono shadow-sm"
+                                            placeholder="E.g. 5 nodes"
                                             value={agentTargetConfig}
                                             onChange={(e) => setAgentTargetConfig(e.target.value)}
-                                        />
-                                    </div>
-
-                                    <div>
-                                        <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2 block pl-1">Distribute Credits</label>
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            step="0.01"
-                                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-emerald-600 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all font-mono"
-                                            placeholder="E.g. 5000"
-                                            value={creditsConfig}
-                                            onChange={(e) => setCreditsConfig(e.target.value)}
                                         />
                                     </div>
                                 </div>
                             </div>
 
                             {/* Actions Mapping */}
-                            <div className="p-6 bg-gray-50 border-t border-gray-100 flex flex-col sm:flex-row gap-3">
+                            <div className="px-6 py-4 bg-gray-50/50 border-t border-gray-100 flex items-center justify-end gap-3">
                                 <button
                                     onClick={() => setIsModalOpen(false)}
-                                    className="w-full sm:w-1/2 py-2.5 bg-white border border-gray-300 rounded-xl text-gray-700 text-sm font-bold shadow-sm hover:bg-gray-50 transition-colors"
+                                    className="px-5 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg text-sm font-bold shadow-sm hover:bg-gray-50 transition-colors"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     onClick={handleModalAllocate}
-                                    disabled={!allocationCustomer || (!agentTargetConfig && !creditsConfig && !agentUUIDConfig) || isAllocating}
-                                    className={`w-full sm:w-1/2 py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors ${!allocationCustomer || (!agentTargetConfig && !creditsConfig && !agentUUIDConfig) || isAllocating ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
+                                    disabled={!allocationCustomer || !agentTargetConfig || isAllocating}
+                                    className={`px-5 py-2 rounded-lg font-bold text-sm min-w-[120px] shadow-sm transition-colors flex items-center justify-center gap-2 ${!allocationCustomer || !agentTargetConfig || isAllocating ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-500/20'}`}
                                 >
-                                    {isAllocating ? <Loader2 className="w-4 h-4 animate-spin" /> : (isEditing ? <Edit2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />)}
-                                    {isEditing ? 'Save Limits' : 'Lock Capacity'}
+                                    {isAllocating ? <Loader2 className="w-4 h-4 animate-spin" /> : (isEditing ? 'Save Limits' : 'Lock Capacity')}
                                 </button>
                             </div>
 

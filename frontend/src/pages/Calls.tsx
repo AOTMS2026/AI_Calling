@@ -3,7 +3,7 @@ import { MainLayout } from '../components/layout/MainLayout';
 import { Card, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { apiClient } from '../api/client';
-import { Loader2, Phone, Calendar, Clock, DollarSign, RefreshCw, Layers, CheckCircle, ShieldAlert, XCircle, ChevronLeft, ChevronRight, PhoneCall } from 'lucide-react';
+import { Loader2, Phone, Calendar, Clock, DollarSign, RefreshCw, Layers, CheckCircle, ShieldAlert, XCircle, ChevronLeft, ChevronRight, PhoneCall, Filter } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export function Calls() {
@@ -18,37 +18,57 @@ export function Calls() {
     const [totalPages, setTotalPages] = useState(1);
     const PAGE_SIZE = 20;
 
-    const fetchCalls = async (pageNum = page) => {
+    // Filter states
+    const [filterExpanded, setFilterExpanded] = useState(false);
+    const [filterStatus, setFilterStatus] = useState('all');
+    const [filterChannel, setFilterChannel] = useState('all');
+    const [filterAgent, setFilterAgent] = useState('all');
+    const [filterSentiment, setFilterSentiment] = useState('all');
+    const [filterDisconnectReason, setFilterDisconnectReason] = useState('all');
+    const [filterCallType, setFilterCallType] = useState('all');
+    const [filterCallerName, setFilterCallerName] = useState('');
+    const [filterCallerNumber, setFilterCallerNumber] = useState('');
+    const [filterDurationMin, setFilterDurationMin] = useState('');
+    const [filterDurationMax, setFilterDurationMax] = useState('');
+    const [availableAgents, setAvailableAgents] = useState<any[]>([]);
+
+    const fetchAvailableAgents = async () => {
+        try {
+            const res = await apiClient.get('/agents/');
+            const agents = res.data?.data || [];
+            setAvailableAgents(agents);
+        } catch (e) {
+            console.error('Failed to fetch agents:', e);
+        }
+    };
+
+    const fetchCalls = async (pageNum = page, forceRefresh = false) => {
         setLoading(true);
         try {
-            const meRes = await apiClient.get('/auth/me');
-            const user = meRes.data;
-            const isCustomer = user.role !== 'admin';
+            const params: any = {
+                page: pageNum,
+                page_size: PAGE_SIZE,
+            };
+            if (forceRefresh) params._forceRefresh = true;
+            if (filterStatus && filterStatus !== 'all') params.status = filterStatus;
+            if (filterChannel && filterChannel !== 'all') params.channel = filterChannel;
+            if (filterAgent && filterAgent !== 'all') params.agent_id = filterAgent;
+            if (filterSentiment && filterSentiment !== 'all') params.sentiment = filterSentiment;
+            if (filterDisconnectReason && filterDisconnectReason !== 'all') params.disconnect_reason = filterDisconnectReason;
+            if (filterCallType && filterCallType !== 'all') params.call_type = filterCallType;
+            if (filterCallerName.trim()) params.caller_name = filterCallerName.trim();
+            if (filterCallerNumber.trim()) params.caller_number = filterCallerNumber.trim();
+            if (filterDurationMin) params.duration_min = parseInt(filterDurationMin);
+            if (filterDurationMax) params.duration_max = parseInt(filterDurationMax);
 
-            // If they are a customer and have NEITHER agent nor campaign assigned
-            if (isCustomer && !user.ravan_campaign_id && !user.ravan_agent_id) {
-                setCalls([]);
-                setTotalPages(1);
-                setLoading(false);
-                return;
-            }
+            const res = await apiClient.get('/api/ravan/all-call-history', { params });
+            const fetchedData = res.data?.data || res.data || {};
+            let finalCalls = fetchedData?.callSessions || fetchedData?.calls || [];
 
-            // Bind explicitly depending on their assignment (Agent OR Campaign)
-            let queryParam = '';
-            if (isCustomer) {
-                if (user.ravan_agent_id) queryParam += `&agent_id=${user.ravan_agent_id}`;
-                if (user.ravan_campaign_id) queryParam += `&campaign_id=${user.ravan_campaign_id}`;
-            }
-
-            const url = `/api/ravan/calling/call-sessions?page=${pageNum}&page_size=${PAGE_SIZE}${queryParam}`;
-
-            const res = await apiClient.get(url);
-            const fetchedData = res.data?.data;
-            setCalls(fetchedData?.callSessions || []);
-
-            // Reconstruct Total counting natively parsed from Ravan AI Meta block
-            const totalCount = fetchedData?.meta?.total || fetchedData?.totalCount || (fetchedData?.callSessions || []).length;
+            const totalCount = fetchedData?.totalCount || fetchedData?.meta?.total || finalCalls.length;
             setTotalPages(Math.max(1, Math.ceil(totalCount / PAGE_SIZE)));
+
+            setCalls(finalCalls);
         } catch (e: any) {
             console.error("Failed to fetch calls:", e);
             toast.error(e.response?.data?.detail || "Failed to load call sessions.");
@@ -57,10 +77,6 @@ export function Calls() {
             setLoading(false);
         }
     };
-
-    useEffect(() => {
-        fetchCalls(page);
-    }, []);
 
     const handlePrevPage = () => {
         if (page > 1) {
@@ -77,6 +93,30 @@ export function Calls() {
             fetchCalls(newPage);
         }
     };
+
+    useEffect(() => {
+        fetchCalls(page);
+        fetchAvailableAgents();
+    }, []);
+
+    useEffect(() => {
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = import.meta.env.MODE === 'production'
+            ? `${wsProtocol}//${window.location.host}/ws`
+            : 'ws://localhost:8000/ws';
+
+        const ws = new WebSocket(wsUrl);
+        ws.onmessage = (event) => {
+            if (event.data === 'update') {
+                console.log("⚡ HISTORY INJECTION: Refreshing Active Session Stream...");
+                // Force fully transparent table reloading!
+                fetchCalls(page, true);
+            }
+        };
+        return () => ws.close();
+    }, [page]);
+
+
 
     const handleRowExpand = async (id: string) => {
         if (expandedId === id) {
@@ -134,8 +174,17 @@ export function Calls() {
                     </div>
 
                     <Button
+                        variant="outline"
+                        className="text-gray-700 bg-white border border-gray-200 hover:bg-gray-50 font-bold tracking-wide shadow-sm h-[38px] flex items-center"
+                        onClick={() => setFilterExpanded(!filterExpanded)}
+                    >
+                        <Filter size={16} className="mr-2 text-gray-500" />
+                        Filters
+                    </Button>
+
+                    <Button
                         className="bg-blue-600 hover:bg-blue-700 text-white font-bold tracking-wide shadow-sm h-[38px]"
-                        onClick={() => fetchCalls(page)}
+                        onClick={() => fetchCalls(page, true)}
                         disabled={loading}
                     >
                         {loading ? <Loader2 size={16} className="animate-spin mr-2" /> : <RefreshCw size={16} className="mr-2" />}
@@ -143,6 +192,171 @@ export function Calls() {
                     </Button>
                 </div>
             </div>
+
+            {filterExpanded && (
+                <Card className="shadow-sm border border-gray-200 mb-6 animate-in fade-in slide-in-from-top-1 duration-200">
+                    <CardContent className="p-5">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+                            <div>
+                                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Status</label>
+                                <select
+                                    className="w-full text-sm p-2.5 border border-gray-200 rounded-xl bg-white text-gray-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all cursor-pointer"
+                                    value={filterStatus}
+                                    onChange={e => setFilterStatus(e.target.value)}
+                                >
+                                    <option value="all">All Status</option>
+                                    <option value="completed">Completed</option>
+                                    <option value="ringing">Ringing</option>
+                                    <option value="in progress">In Progress</option>
+                                    <option value="failed">Failed</option>
+                                    <option value="pending">Pending</option>
+                                    <option value="transfer">Transform / Transfer</option>
+                                    <option value="user hangup">User Hangup</option>
+                                    <option value="agent hangup">Agent Hangup</option>
+                                    <option value="timeout">Timeout</option>
+                                    <option value="error">Error</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Channel</label>
+                                <select
+                                    className="w-full text-sm p-2.5 border border-gray-200 rounded-xl bg-white text-gray-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all cursor-pointer"
+                                    value={filterChannel}
+                                    onChange={e => setFilterChannel(e.target.value)}
+                                >
+                                    <option value="all">All Channel</option>
+                                    <option value="web_call">Web Call</option>
+                                    <option value="inbound">Inbound</option>
+                                    <option value="outbound">Outbound</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Agent</label>
+                                <select
+                                    className="w-full text-sm p-2.5 border border-gray-200 rounded-xl bg-white text-gray-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all cursor-pointer"
+                                    value={filterAgent}
+                                    onChange={e => setFilterAgent(e.target.value)}
+                                >
+                                    <option value="all">All Agents</option>
+                                    {availableAgents.map((a: any) => (
+                                        <option key={a.id} value={a.id}>{a.agentName || a.name || a.id}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Sentiment</label>
+                                <select
+                                    className="w-full text-sm p-2.5 border border-gray-200 rounded-xl bg-white text-gray-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all cursor-pointer"
+                                    value={filterSentiment}
+                                    onChange={e => setFilterSentiment(e.target.value)}
+                                >
+                                    <option value="all">All Sentiment</option>
+                                    <option value="positive">Positive</option>
+                                    <option value="negative">Negative</option>
+                                    <option value="neutral">Neutral</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Disconnect Reason</label>
+                                <select
+                                    className="w-full text-sm p-2.5 border border-gray-200 rounded-xl bg-white text-gray-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all cursor-pointer"
+                                    value={filterDisconnectReason}
+                                    onChange={e => setFilterDisconnectReason(e.target.value)}
+                                >
+                                    <option value="all">All Reasons</option>
+                                    <option value="agent hangup">Agent Hangup</option>
+                                    <option value="user hangup">User Hangup</option>
+                                    <option value="timeout">Timeout</option>
+                                    <option value="error">Error</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Call Type</label>
+                                <select
+                                    className="w-full text-sm p-2.5 border border-gray-200 rounded-xl bg-white text-gray-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all cursor-pointer"
+                                    value={filterCallType}
+                                    onChange={e => setFilterCallType(e.target.value)}
+                                >
+                                    <option value="all">All Calls</option>
+                                    <option value="transfer">Transfer Calls</option>
+                                    <option value="web_call">Web Call</option>
+                                    <option value="inbound">Inbound</option>
+                                    <option value="outbound">Outbound</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Caller Name</label>
+                                <input
+                                    type="text"
+                                    className="w-full text-sm p-2.5 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all bg-gray-50/50"
+                                    placeholder="Search caller name..."
+                                    value={filterCallerName}
+                                    onChange={e => setFilterCallerName(e.target.value)}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Caller Number</label>
+                                <input
+                                    type="text"
+                                    className="w-full text-sm p-2.5 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all font-mono bg-gray-50/50"
+                                    placeholder="+91XXXXXXXXXX"
+                                    value={filterCallerNumber}
+                                    onChange={e => setFilterCallerNumber(e.target.value)}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Duration (sec)</label>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="number"
+                                        className="w-1/2 text-sm p-2.5 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all bg-gray-50/50"
+                                        placeholder="Min"
+                                        value={filterDurationMin}
+                                        onChange={e => setFilterDurationMin(e.target.value)}
+                                        min={0}
+                                    />
+                                    <input
+                                        type="number"
+                                        className="w-1/2 text-sm p-2.5 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all bg-gray-50/50"
+                                        placeholder="Max"
+                                        value={filterDurationMax}
+                                        onChange={e => setFilterDurationMax(e.target.value)}
+                                        min={0}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                        <div className="flex gap-2 mt-5 pt-4 border-t border-gray-100">
+                            <Button
+                                className="bg-blue-600 hover:bg-blue-700 text-white font-bold tracking-wide shadow-sm"
+                                onClick={() => { setPage(1); fetchCalls(1); }}
+                            >
+                                Apply Filters
+                            </Button>
+                            <Button
+                                variant="outline"
+                                className="text-gray-700 bg-white border border-gray-200 hover:bg-gray-50"
+                                onClick={() => {
+                                    setFilterStatus('all');
+                                    setFilterChannel('all');
+                                    setFilterAgent('all');
+                                    setFilterSentiment('all');
+                                    setFilterDisconnectReason('all');
+                                    setFilterCallType('all');
+                                    setFilterCallerName('');
+                                    setFilterCallerNumber('');
+                                    setFilterDurationMin('');
+                                    setFilterDurationMax('');
+                                    setPage(1);
+                                    fetchCalls(1);
+                                }}
+                            >
+                                Reset Filters
+                            </Button>
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
 
             <Card className="shadow-sm overflow-hidden border border-gray-200">
                 <CardContent className="p-0 overflow-x-auto">
@@ -181,17 +395,17 @@ export function Calls() {
                                         >
                                             <td className="px-6 py-4">
                                                 <div className="flex flex-col gap-0.5">
-                                                    <span className="font-bold text-gray-900 text-sm">{c.agentName || 'Unknown Agent'}</span>
+                                                    <span className="font-bold text-gray-900 text-sm">{(c.agentName || 'Unknown Agent').split('[HASH:')[0].trim()}</span>
                                                     <span className="text-[10px] font-mono text-gray-400 tracking-tight">{c.id}</span>
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4">
                                                 <div className="flex items-center gap-3">
                                                     <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-black border border-blue-200 text-[10px] uppercase">
-                                                        {c.callerName ? c.callerName.substring(0, 2) : 'UK'}
+                                                        {c.callerName ? c.callerName.split('[HASH:')[0].trim().substring(0, 2) : 'UK'}
                                                     </div>
                                                     <div className="flex flex-col gap-0.5">
-                                                        <span className="font-bold text-gray-900 group-hover:text-blue-600 transition-colors">{c.callerName || 'Unknown Caller'}</span>
+                                                        <span className="font-bold text-gray-900 group-hover:text-blue-600 transition-colors">{(c.callerName || 'Unknown Caller').split('[HASH:')[0].trim()}</span>
                                                         <span className="flex items-center gap-1.5 text-[11px] text-gray-500 font-medium">
                                                             <Phone size={10} /> {c.callerNumber || 'N/A'}
                                                         </span>
@@ -233,7 +447,7 @@ export function Calls() {
                                                         {c.durationSec ? `${Math.floor(c.durationSec / 60)}m ${c.durationSec % 60}s` : '0s'}
                                                     </div>
                                                     <div className="flex items-center gap-1 text-[11px] font-black text-green-600 tracking-wide">
-                                                        <DollarSign size={10} /> {c.costTotal || '0.00'}
+                                                        {c.costTotal || '0.00'}
                                                     </div>
                                                 </div>
                                             </td>
@@ -297,7 +511,7 @@ export function Calls() {
                                                                         ) : (
                                                                             <div className="flex justify-between items-center text-xs">
                                                                                 <span className="font-semibold text-gray-500">Total Charged Cost</span>
-                                                                                <span className="font-black text-green-600 bg-green-50 px-2 py-0.5 rounded">${sessionDetails[c.id]?.cost_total || c.costTotal || '0.00'}</span>
+                                                                                <span className="font-black text-green-600 bg-green-50 px-2 py-0.5 rounded">{sessionDetails[c.id]?.cost_total || c.costTotal || '0.00'}</span>
                                                                             </div>
                                                                         )}
                                                                     </div>

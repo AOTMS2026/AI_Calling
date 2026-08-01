@@ -5,7 +5,7 @@ import { MainLayout } from '../components/layout/MainLayout';
 import { AIAgentToolsSidebar } from '../components/AIAgentTools/AIAgentToolsSidebar';
 import { apiClient } from '../api/client';
 import { RoomEvent } from 'livekit-client';
-import { Loader2, ArrowLeft, Save, Bot, Cpu, Mic, Settings, Play, X, Search, AudioLines, Square, Info, PhoneCall, ChevronDown, Globe, Phone, Plus, MessageSquare, MicOff, PhoneOff } from 'lucide-react';
+import { Loader2, ArrowLeft, Save, Bot, Cpu, Mic, Settings, Play, X, Search, AudioLines, Square, Info, PhoneCall, ChevronDown, Globe, Phone, Plus, MessageSquare, MicOff, PhoneOff, Volume2, Braces } from 'lucide-react';
 import { LiveKitRoom, useLocalParticipant, useConnectionState, useRoomContext, RoomAudioRenderer } from '@livekit/components-react';
 import '@livekit/components-styles';
 
@@ -102,7 +102,30 @@ export function AgentBuilder() {
     const [prompt, setPrompt] = useState("");
     const [agentName, setAgentName] = useState("");
     const [voiceId, setVoiceId] = useState("");
+    const toggleDayDefault: number[] = [1, 2, 3, 4, 5];
     const [modelId, setModelId] = useState("");
+    const [startSpeaker, setStartSpeaker] = useState("agent");
+    const [welcomeMessageType, setWelcomeMessageType] = useState<"dynamic" | "custom">("dynamic");
+    const [beginMessage, setBeginMessage] = useState("");
+
+    // Speech Configuration Settings
+    const [ambientSound, setAmbientSound] = useState("none");
+    const [ambientSoundVolume, setAmbientSoundVolume] = useState(1.0);
+    const [reminderSeconds, setReminderSeconds] = useState(10);
+    const [reminderMaxCount, setReminderMaxCount] = useState(2);
+    const [reminderMessage, setReminderMessage] = useState("Hello, are you still there?");
+    const [interruptionSensitivity, setInterruptionSensitivity] = useState(0.1);
+    const [isSpeechSettingsSaving, setIsSpeechSettingsSaving] = useState(false);
+
+    // Call Configuration Settings
+    const [voicemailDetectionEnabled, setVoicemailDetectionEnabled] = useState(true);
+    const [voicemailTimeout, setVoicemailTimeout] = useState(7); // seconds
+    const [silenceTimeout, setSilenceTimeout] = useState(10); // seconds
+    const [durationLimit, setDurationLimit] = useState(10); // minutes
+    const [emergencyFallbackEnabled, setEmergencyFallbackEnabled] = useState(false);
+    const [emergencyFallbackNumber, setEmergencyFallbackNumber] = useState("");
+    const [ringDuration, setRingDuration] = useState(32); // seconds
+    const [isCallSettingsSaving, setIsCallSettingsSaving] = useState(false);
 
     // Ravan Voices Architecture
     const [llmModels, setLlmModels] = useState<any[]>([]);
@@ -115,6 +138,12 @@ export function AgentBuilder() {
     const [transferToolData, setTransferToolData] = useState<any>(null);
     const [loadingTransferTool, setLoadingTransferTool] = useState(false);
 
+    const [showEndCallModal, setShowEndCallModal] = useState(false);
+    const [endCallData, setEndCallData] = useState({ name: '', description: '', execution_msg: '' });
+
+    const [showIVRModal, setShowIVRModal] = useState(false);
+    const [ivrData, setIvrData] = useState({ name: '', description: '', pause_ms: 1000 });
+
     // Audio Playback State Management
     const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -123,9 +152,10 @@ export function AgentBuilder() {
     const [webCallLoading, setWebCallLoading] = useState(false);
     const [activeTestRoomUrl, setActiveTestRoomUrl] = useState('');
     const [activeTestRoomToken, setActiveTestRoomToken] = useState('');
+    const [activeCallSessionId, setActiveCallSessionId] = useState<string | null>(null);
 
     // Exact Screenshot UI states
-    const [testCallMode, setTestCallMode] = useState<'web' | 'phone'>('web');
+    const [testCallMode, setTestCallMode] = useState<'web' | 'phone'>('phone');
     const [testCallState, setTestCallState] = useState<'idle' | 'calling' | 'active'>('idle');
     const [testCallFrom, setTestCallFrom] = useState('');
     const [testCallTo, setTestCallTo] = useState('');
@@ -133,11 +163,227 @@ export function AgentBuilder() {
     const [metaVars, setMetaVars] = useState<{ key: string, value: string }[]>([]);
 
     const resetTestCall = () => {
+        if (activeCallSessionId) {
+            // Guarantee a final sync on hard reset
+            apiClient.post(`/api/ravan/calling/finalize-session/${activeCallSessionId}`).catch(() => { });
+        }
         setTestCallState('idle');
         setActiveTestRoomUrl('');
+        setActiveTestRoomToken('');
+        setActiveCallSessionId(null);
         setWebCallLoading(false);
         setPromptVars([]);
         setMetaVars([]);
+    };
+
+    // Auto-polling mechanism to finalize calls immediately and stop efficiently
+    useEffect(() => {
+        let pollInterval: ReturnType<typeof setInterval>;
+        if (testCallState === 'active' && activeCallSessionId) {
+            pollInterval = setInterval(async () => {
+                try {
+                    const res = await apiClient.post(`/api/ravan/calling/finalize-session/${activeCallSessionId}`);
+                    const data = res.data?.data;
+                    const status = (data?.status || '').toLowerCase();
+                    // Stop polling and update UI locally when disconnect occurs naturally
+                    if (['ended', 'completed', 'failed', 'no_answer', 'error'].includes(status)) {
+                        clearInterval(pollInterval);
+                        toast.success("Call fully synchronized natively to dashboard history.");
+                        resetTestCall();
+                    }
+                } catch (e) {
+                    console.error("Silent polling parse error:", e);
+                }
+            }, 5000);
+        }
+        return () => { if (pollInterval) clearInterval(pollInterval); };
+    }, [testCallState, activeCallSessionId]);
+
+    const [agentTools, setAgentTools] = useState<any[]>([]);
+    const [submittingTool, setSubmittingTool] = useState<string | null>(null);
+    const [editingToolId, setEditingToolId] = useState<string | null>(null);
+
+    const handleDeleteTool = async (toolId: string) => {
+        try {
+            await apiClient.delete(`/api/ravan/tools/${toolId}`);
+            toast.success("Tool removed successfully");
+            await fetchAgentTools();
+        } catch (err) {
+            toast.error("Failed to delete tool");
+        }
+    };
+
+    const handleToggleTool = async (toolId: string, currentlyDisabled: boolean) => {
+        try {
+            await apiClient.patch(`/api/ravan/tools/${toolId}`, { disabled: !currentlyDisabled });
+            toast.success(currentlyDisabled ? "Tool enabled" : "Tool disabled");
+            await fetchAgentTools();
+        } catch (err) {
+            toast.error("Failed to toggle tool status");
+        }
+    };
+
+    const handleEditTool = (tool: any) => {
+        setEditingToolId(tool.id);
+        if (tool.type === 'end_call') {
+            setEndCallData({
+                name: tool.name || "",
+                description: tool.description || "",
+                execution_msg: tool.definition?.execution_msg || ""
+            });
+            setShowEndCallModal(true);
+        } else if (tool.type === 'press_digit') {
+            setIvrData({
+                name: tool.name || "",
+                description: tool.description || "",
+                pause_ms: tool.definition?.pause_ms || 1000
+            });
+            setShowIVRModal(true);
+        } else if (tool.type === 'transfer_call') {
+            setTransferToolData({ data: tool });
+            setShowTransferModal(true);
+        } else {
+            toast("You can now safely edit this form configuration.");
+        }
+    };
+
+    const handleSaveCalendar = async (apiKey: string, eventId: string, timezone: string) => {
+        try {
+            setSubmittingTool('calendar');
+            const payload = {
+                agent_id: id,
+                agentId: id,
+                cal_api_key: apiKey,
+                api_key: apiKey,
+                apiKey: apiKey,
+                event_type_id: Number(eventId),
+                eventTypeId: Number(eventId),
+                timezone: timezone
+            };
+
+            await apiClient.post('/api/ravan/calcom/appointments/manage', payload);
+
+            // Store mapping locally for Admin Panel transparency capability
+            await apiClient.post('/api/appointments/calcom-config', {
+                agent_id: id,
+                api_key: apiKey,
+                event_id: eventId,
+                timezone: timezone
+            });
+
+            toast.success("10 min Updated Your Agent..");
+            await fetchAgentTools();
+        } catch (error: any) {
+            toast.error(error.response?.data?.detail || "Failed to push calendar setup");
+        } finally {
+            setSubmittingTool(null);
+        }
+    };
+
+    const fetchAgentTools = async () => {
+        if (id && id !== 'new') {
+            try {
+                const res = await apiClient.get(`/api/ravan/tools?agent_id=${id}`);
+                setAgentTools(res.data?.data || []);
+            } catch (err) {
+                console.error("Failed to map tools", err);
+            }
+        }
+    };
+
+    useEffect(() => {
+        fetchAgentTools();
+    }, [id]);
+
+    const submitEndCall = async () => {
+        try {
+            setSubmittingTool('end_call');
+            const payload = {
+                agentId: id,
+                type: 'end_call',
+                name: endCallData.name,
+                description: endCallData.description,
+                definition: { execution_msg: endCallData.execution_msg }
+            };
+            if (editingToolId) {
+                await apiClient.patch(`/api/ravan/tools/${editingToolId}`, payload);
+            } else {
+                await apiClient.post('/api/ravan/tools', payload);
+            }
+            toast.success("Function successfully synced to Ravan.ai.");
+            await fetchAgentTools();
+            setShowEndCallModal(false);
+            setEditingToolId(null);
+        } catch (error: any) {
+            toast.error(error.response?.data?.detail || "Failed to push function");
+        } finally {
+            setSubmittingTool(null);
+        }
+    };
+
+    const submitIVR = async () => {
+        try {
+            setSubmittingTool('press_digit');
+            const payload = {
+                agentId: id,
+                type: 'press_digit',
+                name: ivrData.name,
+                description: ivrData.description,
+                definition: { pause_ms: ivrData.pause_ms }
+            };
+            if (editingToolId) {
+                await apiClient.patch(`/api/ravan/tools/${editingToolId}`, payload);
+            } else {
+                await apiClient.post('/api/ravan/tools', payload);
+            }
+            toast.success("Function successfully synced to Ravan.ai.");
+            await fetchAgentTools();
+            setShowIVRModal(false);
+            setEditingToolId(null);
+        } catch (error: any) {
+            toast.error(error.response?.data?.detail || "Failed to push function");
+        } finally {
+            setSubmittingTool(null);
+        }
+    };
+
+    const submitTransferCall = async () => {
+        try {
+            setSubmittingTool('transfer_call');
+            const dataDef = transferToolData?.data?.definition || {};
+            const payload = {
+                agentId: id,
+                type: 'transfer_call',
+                name: transferToolData?.data?.name || "transfer_call",
+                description: transferToolData?.data?.description || "",
+                definition: {
+                    mode: dataDef.mode || "cold_transfer",
+                    execution_msg: dataDef.execution_msg || "",
+                    on_hold_music: dataDef.on_hold_music || false,
+                    custom_prompt: dataDef.custom_prompt || false,
+                    show_user_number: dataDef.show_user_number || false,
+                    client_transfer_id: dataDef.client_transfer_id || "",
+                    transfer_to_type: dataDef.transfer_to_type || "static",
+                    phone_number: dataDef.phone_number || "",
+                    timezone: dataDef.timezone || "",
+                    start_time: dataDef.start_time || "",
+                    end_time: dataDef.end_time || ""
+                }
+            };
+            if (editingToolId) {
+                await apiClient.patch(`/api/ravan/tools/${editingToolId}`, payload);
+            } else {
+                await apiClient.post('/api/ravan/tools', payload);
+            }
+            toast.success("Function successfully synced to Ravan.ai.");
+            await fetchAgentTools();
+            setShowTransferModal(false);
+            setEditingToolId(null);
+        } catch (error: any) {
+            toast.error(error.response?.data?.detail || "Failed to push function");
+        } finally {
+            setSubmittingTool(null);
+        }
     };
 
     const initializeTestWebCall = async () => {
@@ -145,6 +391,9 @@ export function AgentBuilder() {
             setWebCallLoading(true);
             const parsedPromptVars = promptVars.reduce((acc, curr) => { if (curr.key) acc[curr.key] = curr.value; return acc; }, {} as any);
             const parsedMetaVars = metaVars.reduce((acc, curr) => { if (curr.key) acc[curr.key] = curr.value; return acc; }, {} as any);
+
+            const meRes = await apiClient.get('/auth/me').catch(() => null);
+            const user = meRes?.data || null;
 
             const callPayload: any = {
                 type: testCallMode === 'web' ? 'web_call' : 'outbound_call',
@@ -164,9 +413,12 @@ export function AgentBuilder() {
 
             if (rawPayload.success || targetPayload.access_token) {
                 toast.success(testCallMode === 'web' ? "Webcall Instance Activated! Bridging WebRTC." : "Phone Call successfully initiated on remote target.");
-                setActiveTestRoomUrl(targetPayload.url || '');
-                setActiveTestRoomToken(targetPayload.access_token || '');
-                setTestCallState('active');
+                if (testCallMode === 'web') {
+                    setActiveTestRoomUrl(targetPayload.url || '');
+                    setActiveTestRoomToken(targetPayload.access_token || '');
+                    setActiveCallSessionId(targetPayload.id || rawPayload.id || null);
+                    setTestCallState('active');
+                }
                 console.log("LIVEKIT SESSION PAYLOAD GENERATED:", targetPayload);
             } else {
                 toast.error(rawPayload.message || "Failed to initialize standard sandbox web call");
@@ -186,6 +438,20 @@ export function AgentBuilder() {
             setPlayingVoiceId(null);
         }
     }, [voiceModalOpen]);
+
+    const handleModelChange = (newModelId: string) => {
+        setModelId(newModelId);
+        const selectedModel = llmModels.find(m => m.id === newModelId);
+        if (selectedModel && selectedModel.voices && selectedModel.voices.length > 0) {
+            // Check if current voiceId is compatible with the new model
+            const isCompatible = selectedModel.voices.some((v: any) => v.id === voiceId);
+            if (!isCompatible) {
+                const defaultVoice = selectedModel.voices[0];
+                setVoiceId(defaultVoice.id);
+                toast.success(`Voice changed to ${defaultVoice.voiceName} to match ${selectedModel.llmModel}`);
+            }
+        }
+    };
 
     useEffect(() => {
         const fetchAgentDetails = async () => {
@@ -218,7 +484,33 @@ export function AgentBuilder() {
                     const data = agentRes.data?.data || agentRes.data;
                     setAgentData(data);
                     setPrompt(data.prompt || "");
-                    setAgentName(data.agentName || "Unnamed Agent");
+                    setAgentName((data.agentName || "Unnamed Agent").split(" [HASH:")[0]);
+
+                    // Hydrate Speech Settings
+                    setAmbientSound(data.ambientSound || "none");
+                    setAmbientSoundVolume(data.ambientSoundVolume !== undefined ? data.ambientSoundVolume : 1.0);
+                    setReminderSeconds(data.reminderTriggerMs ? Math.floor(data.reminderTriggerMs / 1000) : 10);
+                    setReminderMaxCount(data.reminderMaxCount !== undefined ? data.reminderMaxCount : 2);
+                    setReminderMessage(data.reminderMessage || "");
+                    setInterruptionSensitivity(data.interruptionSensitivity !== undefined ? data.interruptionSensitivity : 0.1);
+                    setStartSpeaker(data.startSpeaker || "agent");
+                    if (data.beginMessage) {
+                        setWelcomeMessageType("custom");
+                        setBeginMessage(data.beginMessage);
+                    } else {
+                        setWelcomeMessageType("dynamic");
+                        setBeginMessage("");
+                    }
+
+                    // Hydrate Call Settings
+                    const isVoicemailEnabled = data.voicemailDetectionTimeoutMs !== undefined ? data.voicemailDetectionTimeoutMs > 0 : true;
+                    setVoicemailDetectionEnabled(isVoicemailEnabled);
+                    setVoicemailTimeout(data.voicemailDetectionTimeoutMs ? Math.floor(data.voicemailDetectionTimeoutMs / 1000) : 7);
+                    setSilenceTimeout(data.endcallOnSilenceDuration ? Math.floor(data.endcallOnSilenceDuration / 1000) : 10);
+                    setDurationLimit(data.maxCallDurationMs ? Math.floor(data.maxCallDurationMs / 60000) : 10);
+                    setEmergencyFallbackNumber(data.emergencyFallback || "");
+                    setEmergencyFallbackEnabled(!!data.emergencyFallback);
+                    setRingDuration(data.ringDurationMs ? Math.floor(data.ringDurationMs / 1000) : 32);
 
                     const serverModels = modelsRes.data?.data || [];
                     setLlmModels(serverModels);
@@ -263,14 +555,29 @@ export function AgentBuilder() {
                 }
             }
 
+            let secureAgentName = agentName.trim();
+
             if (id === "new") {
                 // Provision a net-new node onto Ravan grid dynamically
                 const response = await apiClient.post('/agents/', {
-                    agentName: agentName,
+                    agentName: secureAgentName,
                     prompt: prompt,
                     voiceId: structVoiceName,
                     model: structModelName,
-                    s2sModel: structModelName
+                    s2sModel: structModelName,
+                    ambientSound: ambientSound,
+                    ambientSoundVolume: ambientSoundVolume,
+                    reminderTriggerMs: reminderSeconds * 1000,
+                    reminderMaxCount: reminderMaxCount,
+                    reminderMessage: reminderMessage,
+                    interruptionSensitivity: interruptionSensitivity,
+                    voicemailDetectionTimeoutMs: voicemailDetectionEnabled ? voicemailTimeout * 1000 : 0,
+                    endcallOnSilenceDuration: silenceTimeout * 1000,
+                    maxCallDurationMs: durationLimit * 60000,
+                    emergencyFallback: emergencyFallbackEnabled ? emergencyFallbackNumber : "",
+                    ringDurationMs: ringDuration * 1000,
+                    beginMessage: welcomeMessageType === "custom" ? beginMessage : "",
+                    startSpeaker: startSpeaker
                 });
 
                 toast.success("Agent configuration fully deployed to Ravan.ai");
@@ -286,7 +593,20 @@ export function AgentBuilder() {
                     voiceId: structVoiceName,
                     model: structModelName,
                     s2sModel: structModelName,
-                    status: 'ACTIVE'
+                    status: 'ACTIVE',
+                    ambientSound: ambientSound,
+                    ambientSoundVolume: ambientSoundVolume,
+                    reminderTriggerMs: reminderSeconds * 1000,
+                    reminderMaxCount: reminderMaxCount,
+                    reminderMessage: reminderMessage,
+                    interruptionSensitivity: interruptionSensitivity,
+                    voicemailDetectionTimeoutMs: voicemailDetectionEnabled ? voicemailTimeout * 1000 : 0,
+                    endcallOnSilenceDuration: silenceTimeout * 1000,
+                    maxCallDurationMs: durationLimit * 60000,
+                    emergencyFallback: emergencyFallbackEnabled ? emergencyFallbackNumber : "",
+                    ringDurationMs: ringDuration * 1000,
+                    beginMessage: welcomeMessageType === "custom" ? beginMessage : "",
+                    startSpeaker: startSpeaker
                 });
                 toast.success("Configuration successfully synced to Ravan.ai!");
             }
@@ -295,6 +615,85 @@ export function AgentBuilder() {
             toast.error(error.response?.data?.detail || "Failed to sync configuration.");
         } finally {
             setSaving(false);
+        }
+    };
+
+    const handleSaveSpeechSettings = async () => {
+        try {
+            setIsSpeechSettingsSaving(true);
+            const structModelName = llmModels.find(m => m.id === modelId)?.llmModel || "Agni Premium";
+            let structVoiceName = "Iris";
+            for (const m of llmModels) {
+                const voiceMatch = m.voices?.find((v: any) => v.id === voiceId);
+                if (voiceMatch) {
+                    structVoiceName = voiceMatch.voiceName;
+                    break;
+                }
+            }
+
+            if (id === "new") {
+                await handleSave();
+            } else {
+                await apiClient.patch(`/agents/${id}`, {
+                    agentName: agentName,
+                    prompt: prompt,
+                    voiceId: structVoiceName,
+                    model: structModelName,
+                    s2sModel: structModelName,
+                    status: 'ACTIVE',
+                    ambientSound: ambientSound,
+                    ambientSoundVolume: ambientSoundVolume,
+                    reminderTriggerMs: reminderSeconds * 1000,
+                    reminderMaxCount: reminderMaxCount,
+                    reminderMessage: reminderMessage,
+                    interruptionSensitivity: interruptionSensitivity
+                });
+                toast.success("Speech Settings successfully synced to Ravan.ai!");
+            }
+        } catch (error: any) {
+            console.error("Error saving speech settings.", error);
+            toast.error(error.response?.data?.detail || "Failed to sync speech settings.");
+        } finally {
+            setIsSpeechSettingsSaving(false);
+        }
+    };
+
+    const handleSaveCallSettings = async () => {
+        try {
+            setIsCallSettingsSaving(true);
+            const structModelName = llmModels.find(m => m.id === modelId)?.llmModel || "Agni Premium";
+            let structVoiceName = "Iris";
+            for (const m of llmModels) {
+                const voiceMatch = m.voices?.find((v: any) => v.id === voiceId);
+                if (voiceMatch) {
+                    structVoiceName = voiceMatch.voiceName;
+                    break;
+                }
+            }
+
+            if (id === "new") {
+                await handleSave();
+            } else {
+                await apiClient.patch(`/agents/${id}`, {
+                    agentName: agentName,
+                    prompt: prompt,
+                    voiceId: structVoiceName,
+                    model: structModelName,
+                    s2sModel: structModelName,
+                    status: 'ACTIVE',
+                    voicemailDetectionTimeoutMs: voicemailDetectionEnabled ? voicemailTimeout * 1000 : 0,
+                    endcallOnSilenceDuration: silenceTimeout * 1000,
+                    maxCallDurationMs: durationLimit * 60000,
+                    emergencyFallback: emergencyFallbackEnabled ? emergencyFallbackNumber : "",
+                    ringDurationMs: ringDuration * 1000
+                });
+                toast.success("Call Settings successfully synced to Ravan.ai!");
+            }
+        } catch (error: any) {
+            console.error("Error saving call settings.", error);
+            toast.error(error.response?.data?.detail || "Failed to sync call settings.");
+        } finally {
+            setIsCallSettingsSaving(false);
         }
     };
 
@@ -360,6 +759,8 @@ export function AgentBuilder() {
         }
     };
 
+    const [isEditingName, setIsEditingName] = useState(false);
+
     return (
         <MainLayout>
             <div className="w-full bg-slate-50/50 rounded-2xl p-6 md:p-8 min-h-[85vh] flex flex-col relative">
@@ -375,10 +776,22 @@ export function AgentBuilder() {
                         </button>
                         <div>
                             <div className="flex items-center gap-3">
-                                <h1 className="text-2xl font-black text-gray-900 tracking-tight flex items-center gap-2">
-                                    {agentName}
-                                </h1>
-                                <button className="text-gray-400 hover:text-gray-600"><Settings size={16} /></button>
+                                {isEditingName ? (
+                                    <input
+                                        type="text"
+                                        autoFocus
+                                        className="text-2xl font-black text-gray-900 tracking-tight bg-white border border-[#0a8ea0] rounded-lg px-2 py-1 outline-none w-64"
+                                        value={agentName}
+                                        onChange={(e) => setAgentName(e.target.value)}
+                                        onBlur={() => setIsEditingName(false)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') setIsEditingName(false); }}
+                                    />
+                                ) : (
+                                    <h1 className="text-2xl font-black text-gray-900 tracking-tight flex items-center gap-2">
+                                        {agentName}
+                                    </h1>
+                                )}
+                                <button onClick={() => setIsEditingName(!isEditingName)} className="text-gray-400 hover:text-[#0a8ea0] transition-colors"><Settings size={16} /></button>
                             </div>
                             <span className="text-xs font-mono text-gray-400 mt-1 block">ID: {id}</span>
                         </div>
@@ -408,7 +821,7 @@ export function AgentBuilder() {
                 ) : (
                     <div className="flex flex-col gap-6">
 
-                        {/* Custom Configurations Navbar Navbar */}
+                        {/* Custom Configurations Navbar */}
                         <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm px-6 py-4 flex flex-col md:flex-row items-center gap-6">
 
                             <div className="flex items-center gap-4 w-full md:w-auto">
@@ -417,7 +830,7 @@ export function AgentBuilder() {
                                 </label>
                                 <select
                                     value={modelId}
-                                    onChange={(e) => setModelId(e.target.value)}
+                                    onChange={(e) => handleModelChange(e.target.value)}
                                     className="w-full md:w-64 px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                                 >
                                     <option value="" disabled>Select LLM Model Engine</option>
@@ -435,16 +848,16 @@ export function AgentBuilder() {
                                 </label>
                                 <button
                                     onClick={() => setVoiceModalOpen(true)}
-                                    className="flex-1 md:max-w-sm px-4 py-2 bg-gray-50 border border-gray-200 hover:border-blue-300 rounded-xl flex items-center justify-between transition-colors shadow-sm group"
+                                    className="w-full md:max-w-sm px-4 py-2.5 bg-gray-50 border border-gray-200 hover:border-blue-300 rounded-xl flex items-center justify-between transition-colors shadow-sm group"
                                 >
                                     <div className="flex items-center gap-3">
                                         {activeVoice?.imgUrl ? (
-                                            <div className="w-7 h-7 rounded-full border border-gray-300 overflow-hidden relative shadow-sm">
+                                            <div className="w-7 h-7 rounded-full border border-gray-300 overflow-hidden relative shadow-sm animate-in fade-in">
                                                 <img src={activeVoice.imgUrl} className="w-full h-full object-cover" alt={activeVoice.voiceName} />
                                                 <div className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border border-white ${activeVoice.gender?.toLowerCase() === 'female' ? 'bg-pink-500' : 'bg-blue-500'}`}></div>
                                             </div>
                                         ) : (
-                                            <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center"><Mic size={12} className="text-blue-500" /></div>
+                                            <div className="w-7 h-7 rounded-full bg-blue-105 flex items-center justify-center"><Mic size={12} className="text-blue-500" /></div>
                                         )}
                                         <div className="text-left flex flex-col">
                                             <span className="text-sm font-bold text-gray-900 group-hover:text-blue-600 transition-colors tracking-tight">{activeVoice?.voiceName || "Select a Voice"}</span>
@@ -481,7 +894,53 @@ export function AgentBuilder() {
                             </div>
 
                             {/* Middle Settings / Tools Column (Red Box Request) */}
-                            <AIAgentToolsSidebar onOpenTransferModal={handleOpenTransferModal} />
+                            <AIAgentToolsSidebar
+                                onOpenTransferModal={handleOpenTransferModal}
+                                onOpenEndCallModal={() => setShowEndCallModal(true)}
+                                onOpenIVRModal={() => setShowIVRModal(true)}
+                                agentTools={agentTools}
+                                onDeleteTool={handleDeleteTool}
+                                onToggleTool={handleToggleTool}
+                                onEditTool={handleEditTool}
+                                onSaveCalendar={handleSaveCalendar}
+                                isCalendarSaving={submittingTool === 'calendar'}
+                                ambientSound={ambientSound}
+                                setAmbientSound={setAmbientSound}
+                                ambientSoundVolume={ambientSoundVolume}
+                                setAmbientSoundVolume={setAmbientSoundVolume}
+                                reminderSeconds={reminderSeconds}
+                                setReminderSeconds={setReminderSeconds}
+                                reminderMaxCount={reminderMaxCount}
+                                setReminderMaxCount={setReminderMaxCount}
+                                reminderMessage={reminderMessage}
+                                setReminderMessage={setReminderMessage}
+                                interruptionSensitivity={interruptionSensitivity}
+                                setInterruptionSensitivity={setInterruptionSensitivity}
+                                onSaveSpeechSettings={handleSaveSpeechSettings}
+                                isSpeechSettingsSaving={isSpeechSettingsSaving}
+                                voicemailDetectionEnabled={voicemailDetectionEnabled}
+                                setVoicemailDetectionEnabled={setVoicemailDetectionEnabled}
+                                voicemailTimeout={voicemailTimeout}
+                                setVoicemailTimeout={setVoicemailTimeout}
+                                silenceTimeout={silenceTimeout}
+                                setSilenceTimeout={setSilenceTimeout}
+                                durationLimit={durationLimit}
+                                setDurationLimit={setDurationLimit}
+                                emergencyFallbackEnabled={emergencyFallbackEnabled}
+                                setEmergencyFallbackEnabled={setEmergencyFallbackEnabled}
+                                emergencyFallbackNumber={emergencyFallbackNumber}
+                                setEmergencyFallbackNumber={setEmergencyFallbackNumber}
+                                ringDuration={ringDuration}
+                                setRingDuration={setRingDuration}
+                                onSaveCallSettings={handleSaveCallSettings}
+                                isCallSettingsSaving={isCallSettingsSaving}
+                                startSpeaker={startSpeaker}
+                                setStartSpeaker={setStartSpeaker}
+                                welcomeMessageType={welcomeMessageType}
+                                setWelcomeMessageType={setWelcomeMessageType}
+                                beginMessage={beginMessage}
+                                setBeginMessage={setBeginMessage}
+                            />
 
                         </div>
 
@@ -501,83 +960,56 @@ export function AgentBuilder() {
                             </div>
 
                             {testCallState === 'idle' ? (
-                                <div className="p-4 flex flex-col flex-1">
-                                    {/* Segmented Control */}
-                                    <div className="flex bg-gray-50 border border-gray-100 rounded-xl p-1 mb-4">
-                                        <button
-                                            onClick={() => setTestCallMode('web')}
-                                            className={`flex-1 flex items-center justify-center gap-2 py-2 text-[12px] font-bold rounded-lg transition-all ${testCallMode === 'web' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500 hover:text-gray-700'}`}
-                                        >
-                                            <Globe size={14} /> Web Call
-                                        </button>
-                                        <button
-                                            onClick={() => setTestCallMode('phone')}
-                                            className={`flex-1 flex items-center justify-center gap-2 py-2 text-[12px] font-bold rounded-lg transition-all ${testCallMode === 'phone' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500 hover:text-gray-700'}`}
-                                        >
-                                            <Phone size={14} /> Phone Call
+                                <div className="p-4 flex flex-col flex-1 gap-4">
+                                    <div>
+                                        <label className="block text-[11px] font-bold text-gray-500 mb-1.5 uppercase tracking-widest">From Number</label>
+                                        <input type="text" value={testCallFrom} onChange={(e) => setTestCallFrom(e.target.value)} placeholder="+1234567890" className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 focus:outline-none focus:border-[#0a8ea0]" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[11px] font-bold text-gray-500 mb-1.5 uppercase tracking-widest">To Number</label>
+                                        <input type="text" value={testCallTo} onChange={(e) => setTestCallTo(e.target.value)} placeholder="+0987654321" className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 focus:outline-none focus:border-[#0a8ea0]" />
+                                    </div>
+
+                                    <div className="border border-gray-100 rounded-xl p-4 bg-white">
+                                        <span className="text-[11px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1.5 mb-3">{'{ }'} PROMPT VARIABLES</span>
+                                        <div className="flex flex-col gap-2 mb-3">
+                                            {promptVars.map((v, i) => (
+                                                <div key={i} className="flex items-center gap-2">
+                                                    <input type="text" placeholder="Key" value={v.key} onChange={e => { const n = [...promptVars]; n[i].key = e.target.value; setPromptVars(n); }} className="w-1/2 px-3 py-1.5 border border-gray-250 rounded text-xs focus:border-[#0a8ea0] outline-none" />
+                                                    <input type="text" placeholder="Value" value={v.value} onChange={e => { const n = [...promptVars]; n[i].value = e.target.value; setPromptVars(n); }} className="w-1/2 px-3 py-1.5 border border-gray-250 rounded text-xs focus:border-[#0a8ea0] outline-none" />
+                                                    <button onClick={() => setPromptVars(promptVars.filter((_, idx) => idx !== i))} className="text-gray-400 hover:text-red-500"><X size={14} /></button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <button onClick={() => setPromptVars([...promptVars, { key: '', value: '' }])} className="flex items-center gap-1.5 px-3 py-1 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded text-[11px] font-bold text-gray-650 transition-colors">
+                                            <Plus size={12} /> Add
                                         </button>
                                     </div>
 
-                                    {testCallMode === 'web' ? (
-                                        <div className="space-y-4">
-                                            <div className="flex items-center gap-2 px-4 py-2 border border-gray-100 rounded-xl bg-white shadow-sm">
-                                                <Info size={14} className="text-[#0a8ea0]" />
-                                                <span className="text-[11px] text-gray-500 font-medium">Please note memory is not supported in Webcall.</span>
-                                            </div>
-
-                                            <div className="border border-gray-100 rounded-xl p-4 bg-white">
-                                                <span className="text-[11px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1.5 mb-3">{'{ }'} PROMPT VARIABLES</span>
-                                                <div className="flex flex-col gap-2 mb-3">
-                                                    {promptVars.map((v, i) => (
-                                                        <div key={i} className="flex items-center gap-2">
-                                                            <input type="text" placeholder="Key" value={v.key} onChange={e => { const n = [...promptVars]; n[i].key = e.target.value; setPromptVars(n); }} className="w-1/2 px-3 py-1.5 border border-gray-200 rounded text-xs focus:border-[#0a8ea0] outline-none" />
-                                                            <input type="text" placeholder="Value" value={v.value} onChange={e => { const n = [...promptVars]; n[i].value = e.target.value; setPromptVars(n); }} className="w-1/2 px-3 py-1.5 border border-gray-200 rounded text-xs focus:border-[#0a8ea0] outline-none" />
-                                                            <button onClick={() => setPromptVars(promptVars.filter((_, idx) => idx !== i))} className="text-gray-400 hover:text-red-500"><X size={14} /></button>
-                                                        </div>
-                                                    ))}
+                                    <div className="border border-gray-100 rounded-xl p-4 bg-white">
+                                        <span className="text-[11px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1.5 mb-3">{'{ }'} METADATA</span>
+                                        <div className="flex flex-col gap-2 mb-3">
+                                            {metaVars.map((v, i) => (
+                                                <div key={i} className="flex items-center gap-2">
+                                                    <input type="text" placeholder="Key" value={v.key} onChange={e => { const n = [...metaVars]; n[i].key = e.target.value; setMetaVars(n); }} className="w-1/2 px-3 py-1.5 border border-gray-250 rounded text-xs focus:border-[#0a8ea0] outline-none" />
+                                                    <input type="text" placeholder="Value" value={v.value} onChange={e => { const n = [...metaVars]; n[i].value = e.target.value; setMetaVars(n); }} className="w-1/2 px-3 py-1.5 border border-gray-250 rounded text-xs focus:border-[#0a8ea0] outline-none" />
+                                                    <button onClick={() => setMetaVars(metaVars.filter((_, idx) => idx !== i))} className="text-gray-400 hover:text-red-500"><X size={14} /></button>
                                                 </div>
-                                                <button onClick={() => setPromptVars([...promptVars, { key: '', value: '' }])} className="flex items-center gap-1.5 px-3 py-1 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded text-[11px] font-bold text-gray-600 transition-colors">
-                                                    <Plus size={12} /> Add
-                                                </button>
-                                            </div>
-
-                                            <div className="border border-gray-100 rounded-xl p-4 bg-white">
-                                                <span className="text-[11px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1.5 mb-3">{'{ }'} METADATA</span>
-                                                <div className="flex flex-col gap-2 mb-3">
-                                                    {metaVars.map((v, i) => (
-                                                        <div key={i} className="flex items-center gap-2">
-                                                            <input type="text" placeholder="Key" value={v.key} onChange={e => { const n = [...metaVars]; n[i].key = e.target.value; setMetaVars(n); }} className="w-1/2 px-3 py-1.5 border border-gray-200 rounded text-xs focus:border-[#0a8ea0] outline-none" />
-                                                            <input type="text" placeholder="Value" value={v.value} onChange={e => { const n = [...metaVars]; n[i].value = e.target.value; setMetaVars(n); }} className="w-1/2 px-3 py-1.5 border border-gray-200 rounded text-xs focus:border-[#0a8ea0] outline-none" />
-                                                            <button onClick={() => setMetaVars(metaVars.filter((_, idx) => idx !== i))} className="text-gray-400 hover:text-red-500"><X size={14} /></button>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                                <button onClick={() => setMetaVars([...metaVars, { key: '', value: '' }])} className="flex items-center gap-1.5 px-3 py-1 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded text-[11px] font-bold text-gray-600 transition-colors">
-                                                    <Plus size={12} /> Add
-                                                </button>
-                                            </div>
+                                            ))}
                                         </div>
-                                    ) : (
-                                        <div className="space-y-4 pt-2">
-                                            <div>
-                                                <label className="block text-[11px] font-bold text-gray-500 mb-1.5 uppercase tracking-widest">From Number</label>
-                                                <input type="text" value={testCallFrom} onChange={(e) => setTestCallFrom(e.target.value)} placeholder="+1234567890" className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 focus:outline-none focus:border-[#0a8ea0]" />
-                                            </div>
-                                            <div>
-                                                <label className="block text-[11px] font-bold text-gray-500 mb-1.5 uppercase tracking-widest">To Number</label>
-                                                <input type="text" value={testCallTo} onChange={(e) => setTestCallTo(e.target.value)} placeholder="+0987654321" className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 focus:outline-none focus:border-[#0a8ea0]" />
-                                            </div>
-                                        </div>
-                                    )}
+                                        <button onClick={() => setMetaVars([...metaVars, { key: '', value: '' }])} className="flex items-center gap-1.5 px-3 py-1 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded text-[11px] font-bold text-gray-650 transition-colors">
+                                            <Plus size={12} /> Add
+                                        </button>
+                                    </div>
 
-                                    <div className="mt-8 pt-4">
+                                    <div className="mt-4 pt-4 border-t border-gray-100">
                                         <button
                                             disabled={!id || id === 'new' || webCallLoading}
                                             onClick={initializeTestWebCall}
                                             className="w-full flex items-center justify-center gap-2 py-3 bg-[#0a8ea0] hover:bg-[#077a8a] text-white rounded-[12px] font-bold text-[13px] tracking-wide transition-colors disabled:opacity-50 shadow-[0_4px_14px_0_rgba(10,142,160,0.39)]"
                                         >
-                                            {webCallLoading ? <Loader2 size={16} className="animate-spin" /> : (testCallMode === 'web' ? <Globe size={16} /> : <PhoneCall size={16} />)}
-                                            {testCallMode === 'web' ? 'Start Web Call' : 'Start Phone Call'}
+                                            {webCallLoading ? <Loader2 size={16} className="animate-spin" /> : <PhoneCall size={16} />}
+                                            Start Phone Call
                                         </button>
                                     </div>
                                 </div>
@@ -708,6 +1140,92 @@ export function AgentBuilder() {
                                 <button onClick={() => setVoiceModalOpen(false)} className="px-6 py-2.5 border border-gray-200 hover:bg-gray-50 rounded-xl text-sm font-bold text-gray-700 transition-colors">
                                     Close Framework
                                 </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Voice Selection Modal Portal */}
+                {/* Voice Modal removed from diff for brevity but kept in code ...  it ends before Transfer Portal */}
+
+                {/* End Call Creation Modal Portal */}
+                {showEndCallModal && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/30 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+                        <div className="bg-white rounded-[24px] w-full max-w-xl max-h-[95vh] flex flex-col shadow-2xl relative border border-gray-100 overflow-hidden transform transition-all scale-in">
+                            <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between shrink-0 bg-white">
+                                <h2 className="text-[17px] font-black text-gray-800 tracking-tight flex items-center gap-2">
+                                    <PhoneOff size={18} /> End Call <Info size={14} className="text-gray-400 cursor-pointer" />
+                                </h2>
+                                <button onClick={() => setShowEndCallModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors"><X size={20} /></button>
+                            </div>
+                            <div className="p-6 md:p-8 bg-slate-50/30 overflow-y-auto flex-1 flex flex-col gap-6">
+                                <p className="text-[12px] font-medium text-gray-500 bg-gray-50 p-4 rounded-xl border border-gray-200">Lets the agent gracefully terminate the conversation when the user is done or the call... Define when the agent should end the call.</p>
+
+                                <div>
+                                    <label className="block text-[11px] font-semibold text-gray-700 mb-1.5">Name <span className="text-red-500">*</span></label>
+                                    <input type="text" value={endCallData.name} onChange={e => setEndCallData({ ...endCallData, name: e.target.value })} placeholder="end_call" className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-lg text-[13px] font-medium text-gray-800 focus:outline-none focus:border-blue-500 shadow-sm transition-colors" />
+                                </div>
+
+                                <div>
+                                    <label className="block text-[11px] font-semibold text-gray-700 mb-1.5">Description <span className="text-red-500">*</span></label>
+                                    <textarea rows={2} value={endCallData.description} onChange={e => setEndCallData({ ...endCallData, description: e.target.value })} placeholder="Describe when the assistant should call this function." className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-lg text-[13px] font-medium text-gray-800 focus:outline-none focus:border-blue-500 shadow-sm transition-colors resize-none" />
+                                </div>
+
+                                <div>
+                                    <label className="block text-[11px] font-semibold text-gray-700 mb-1.5">Execution Message</label>
+                                    <input type="text" value={endCallData.execution_msg} onChange={e => setEndCallData({ ...endCallData, execution_msg: e.target.value })} placeholder="Message spoken while this function executes" className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-lg text-[13px] font-medium text-gray-800 focus:outline-none focus:border-blue-500 shadow-sm transition-colors" />
+                                </div>
+
+                                <div className="flex items-center justify-end gap-3 mt-4 pt-4 border-t border-gray-100">
+                                    <button onClick={() => { setShowEndCallModal(false); setEditingToolId(null); }} className="px-5 py-2 hover:bg-gray-100 rounded-xl text-[13px] font-bold text-gray-600 transition-colors">Cancel</button>
+                                    <button onClick={submitEndCall} disabled={submittingTool === 'end_call'} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-[13px] flex items-center gap-2 font-bold tracking-wide transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+                                        {submittingTool === 'end_call' && <Loader2 size={16} className="animate-spin" />} {editingToolId ? 'Update Function' : 'Add Function'}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* IVR Modal Portal */}
+                {showIVRModal && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/30 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+                        <div className="bg-white rounded-[24px] w-full max-w-xl max-h-[95vh] flex flex-col shadow-2xl relative border border-gray-100 overflow-hidden transform transition-all scale-in">
+                            <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between shrink-0 bg-white">
+                                <h2 className="text-[17px] font-black text-gray-800 tracking-tight flex items-center gap-2">
+                                    IVR / Press Digit <Info size={14} className="text-gray-400 cursor-pointer" />
+                                </h2>
+                                <button onClick={() => setShowIVRModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors"><X size={20} /></button>
+                            </div>
+                            <div className="p-6 md:p-8 bg-slate-50/30 overflow-y-auto flex-1 flex flex-col gap-6">
+                                <div className="flex flex-col gap-1.5 bg-gray-50 p-4 rounded-xl border border-gray-200">
+                                    <h3 className="font-bold text-[14px]">Help information</h3>
+                                    <p className="text-[12px] font-medium text-gray-500">Configure the digit-press IVR navigation function.</p>
+                                </div>
+
+                                <div>
+                                    <label className="block text-[11px] font-semibold text-gray-700 mb-1.5">Name <span className="text-red-500">*</span></label>
+                                    <input type="text" value={ivrData.name} onChange={e => setIvrData({ ...ivrData, name: e.target.value })} placeholder="press_digit" className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-lg text-[13px] font-medium text-gray-800 focus:outline-none focus:border-blue-500 shadow-sm transition-colors" />
+                                </div>
+
+                                <div>
+                                    <label className="block text-[11px] font-semibold text-gray-700 mb-1.5">Description (Optional)</label>
+                                    <textarea rows={2} value={ivrData.description} onChange={e => setIvrData({ ...ivrData, description: e.target.value })} placeholder="Press a digit to navigate the IVR menu" className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-lg text-[13px] font-medium text-gray-800 focus:outline-none focus:border-blue-500 shadow-sm transition-colors resize-none" />
+                                </div>
+
+                                <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl">
+                                    <h4 className="text-[13px] font-bold text-gray-800 mb-2">Press Digit Config</h4>
+                                    <label className="block text-[11px] font-semibold text-gray-700 mb-1.5">Pause Detection Delay (ms)</label>
+                                    <input type="number" value={ivrData.pause_ms} onChange={e => setIvrData({ ...ivrData, pause_ms: parseInt(e.target.value) })} placeholder="1000" className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-lg text-[13px] font-medium text-gray-800 focus:outline-none focus:border-blue-500 shadow-sm transition-colors mb-2" />
+                                    <p className="text-[11px] text-gray-500">How long the agent waits after speaking before pressing a digit. Default: 1000ms.</p>
+                                </div>
+
+                                <div className="flex items-center justify-end gap-3 mt-4 pt-4 border-t border-gray-100">
+                                    <button onClick={() => { setShowIVRModal(false); setEditingToolId(null); }} className="px-5 py-2 hover:bg-gray-100 rounded-xl text-[13px] font-bold text-gray-600 transition-colors">Cancel</button>
+                                    <button onClick={submitIVR} disabled={submittingTool === 'press_digit'} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-[13px] flex items-center gap-2 font-bold tracking-wide transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+                                        {submittingTool === 'press_digit' && <Loader2 size={16} className="animate-spin" />} {editingToolId ? 'Update Function' : 'Add Function'}
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -859,8 +1377,10 @@ export function AgentBuilder() {
 
                             {/* Footer */}
                             <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3 bg-white shrink-0">
-                                <button onClick={() => setShowTransferModal(false)} className="px-5 py-2 border border-gray-200 rounded-lg text-[13px] font-bold text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
-                                <button disabled={loadingTransferTool} className="px-6 py-2 bg-[#4db5c2] hover:bg-[#3ea5b2] rounded-lg text-[13px] font-bold text-white shadow-sm transition-colors disabled:opacity-50">Save</button>
+                                <button onClick={() => { setShowTransferModal(false); setEditingToolId(null); }} className="px-5 py-2 border border-gray-200 rounded-lg text-[13px] font-bold text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
+                                <button onClick={submitTransferCall} disabled={submittingTool === 'transfer_call' || loadingTransferTool} className="px-6 py-2 bg-[#4db5c2] hover:bg-[#3ea5b2] rounded-lg text-[13px] font-bold flex items-center gap-2 text-white shadow-sm transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+                                    {submittingTool === 'transfer_call' && <Loader2 size={16} className="animate-spin" />} {editingToolId ? 'Update Function' : 'Save Function'}
+                                </button>
                             </div>
                         </div>
                     </div>

@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Backgro
 from sqlmodel import Session, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.database.connection import get_session, engine
-from app.models.domain import Contact, Call
+from app.models.domain import Contact, Call, User
+from app.api.dependencies import get_current_user
 import io
 import csv
 import os
@@ -116,7 +117,8 @@ async def get_upload_progress(job_id: str):
 @router.post("/bulk-upload")
 async def bulk_upload_contacts(
     background_tasks: BackgroundTasks, 
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user)
 ):
     if not file.filename.endswith(".xlsx"):
         raise HTTPException(status_code=400, detail="Only Excel (.xlsx) files are allowed for bulk upload")
@@ -138,8 +140,11 @@ async def bulk_upload_contacts(
     return {"message": "Bulk upload started", "job_id": job_id}
 
 @router.post("/upload")
-async def upload_contacts(file: UploadFile = File(...), db: Session = Depends(get_session)):
-    current_user_id = 1 
+async def upload_contacts(
+    file: UploadFile = File(...), 
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
     
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are allowed")
@@ -163,7 +168,11 @@ async def upload_contacts(file: UploadFile = File(...), db: Session = Depends(ge
     return {"message": "Contacts uploaded and saved to PostgreSQL successfully"}
 
 @router.get("/")
-def get_contacts(db: Session = Depends(get_session), limit: int = 500):
+def get_contacts(
+    db: Session = Depends(get_session), 
+    limit: int = 500,
+    current_user: User = Depends(get_current_user)
+):
     contacts = db.exec(select(Contact).order_by(Contact.phone.asc()).limit(limit)).all()
     return contacts
 
@@ -178,8 +187,13 @@ def manual_dial_contact(phone: str, db: Session = Depends(get_session)):
     return {"message": "Call Dispatched architecture successfully removed.", "vendor_sid": new_call.vendor_call_sid}
 
 @router.post("/single")
-def create_single_contact(contact: Contact, db: Session = Depends(get_session)):
+def create_single_contact(
+    contact: Contact, 
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
     """Receives JSON from the UI Modal to manually inject a single user"""
+
     # Safe insert skipping crashes if phone number already exists
     stmt = pg_insert(Contact).values([contact.model_dump()]).on_conflict_do_nothing()
     db.execute(stmt)
