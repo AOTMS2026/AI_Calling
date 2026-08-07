@@ -14,7 +14,9 @@ export default function WhatsAppAutomation() {
     const [templates, setTemplates] = useState<any[]>([]);
     const [groups, setGroups] = useState<any[]>([]);
     const [messages, setMessages] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [contacts, setContacts] = useState<any[]>([]); // Connect CRM database contacts
+    const [loading, setLoading] = useState(false);
+    const [expandedCampaignId, setExpandedCampaignId] = useState<number | null>(null);
 
     // Compose state
     const [campaignName, setCampaignName] = useState('');
@@ -30,32 +32,95 @@ export default function WhatsAppAutomation() {
     const [directAttachmentUrl, setDirectAttachmentUrl] = useState('');
     const [directAttachmentType, setDirectAttachmentType] = useState<string>('text');
 
-    // Fetch data
-    const fetchData = async () => {
+    // On-demand specific tab fetching (Optimized performance prevents head-of-line serial requests blocking)
+    const fetchCampaignsData = async () => {
         try {
             setLoading(true);
-            const campaignsRes = await apiClient.get('/whatsapp/campaigns');
+            const [campaignsRes, msgRes] = await Promise.all([
+                apiClient.get('/whatsapp/campaigns'),
+                apiClient.get('/whatsapp/messages')
+            ]);
             setCampaigns(campaignsRes.data || []);
-
-            const tempRes = await apiClient.get('/whatsapp/templates');
-            setTemplates(tempRes.data || []);
-
-            const groupRes = await apiClient.get('/whatsapp/groups');
-            setGroups(groupRes.data || []);
-
-            const msgRes = await apiClient.get('/whatsapp/messages');
             setMessages(msgRes.data || []);
         } catch (e) {
-            console.error("WhatsApp module fetch error:", e);
-            toast.error("Failed to load WhatsApp data.");
+            console.error("WhatsApp campaign fetch error:", e);
         } finally {
             setLoading(false);
         }
     };
 
+    const fetchComposeData = async () => {
+        try {
+            setLoading(true);
+            const [tempRes, groupRes] = await Promise.all([
+                apiClient.get('/whatsapp/templates'),
+                apiClient.get('/whatsapp/groups')
+            ]);
+            setTemplates(tempRes.data || []);
+            setGroups(groupRes.data || []);
+        } catch (e) {
+            console.error("WhatsApp compose options fetch error:", e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const fetchChatData = async () => {
+        try {
+            setLoading(true);
+            const [contactsRes, msgRes] = await Promise.all([
+                apiClient.get('/contacts'),
+                apiClient.get('/whatsapp/messages')
+            ]);
+            setContacts(contactsRes.data || []);
+            setMessages(msgRes.data || []);
+        } catch (e) {
+            console.error("WhatsApp direct chat info fetch error:", e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Load active tab data instantly
     useEffect(() => {
-        fetchData();
-    }, []);
+        if (activeTab === 'campaigns') {
+            fetchCampaignsData();
+        } else if (activeTab === 'compose') {
+            fetchComposeData();
+        } else if (activeTab === 'chat') {
+            fetchChatData();
+        }
+    }, [activeTab]);
+
+    const handleRefresh = () => {
+        if (activeTab === 'campaigns') fetchCampaignsData();
+        else if (activeTab === 'compose') fetchComposeData();
+        else if (activeTab === 'chat') fetchChatData();
+    };
+
+    // Auto-import CRM contacts directly into design composer
+    const handleImportFromCRM = async () => {
+        try {
+            setLoading(true);
+            const res = await apiClient.get('/contacts');
+            const crmContacts = res.data || [];
+            if (crmContacts.length === 0) {
+                toast.error("No contacts found in CRM database to import.");
+                return;
+            }
+            const mapped = crmContacts.map((c: any) => ({
+                phone: c.phone || "9876543210",
+                name: c.name || `${c.first_name || ''} ${c.last_name || ''}`.trim() || "Lead",
+                course: c.tag || c.custom_field || "AI Training Program"
+            }));
+            setCsvFileContent(mapped);
+            toast.success(`Imported ${mapped.length} contacts from CRM successfully.`);
+        } catch (e) {
+            toast.error("Failed to import from CRM.");
+        } finally {
+            setLoading(false);
+        }
+    };
 
     // CSV Parse Simulator
     const handleCsvUploadSimulate = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -75,7 +140,7 @@ export default function WhatsAppAutomation() {
             const apiAction = action === 'retry' ? 'retry-failed' : action;
             await apiClient.post(`/whatsapp/campaigns/${id}/${apiAction}`);
             toast.success(`Campaign ${action} complete.`);
-            fetchData();
+            fetchCampaignsData();
         } catch (err) {
             toast.error("Action error.");
         }
@@ -98,7 +163,7 @@ export default function WhatsAppAutomation() {
             setDirectMsgText('');
             setDirectAttachmentUrl('');
             setDirectAttachmentType('text');
-            fetchData();
+            fetchChatData();
         } catch (e) {
             toast.error("Send failed.");
         }
@@ -131,7 +196,7 @@ export default function WhatsAppAutomation() {
             setCsvFileContent([]);
             setSelectedTemplateId('');
             setActiveTab('campaigns');
-            fetchData();
+            fetchCampaignsData();
         } catch (e) {
             toast.error("Failed to start campaign.");
         }
@@ -176,8 +241,8 @@ export default function WhatsAppAutomation() {
                     </div>
 
                     <button
-                        onClick={fetchData}
-                        className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 hover:border-slate-350 text-slate-700 rounded-lg text-xs font-semibold transition-all active:scale-95"
+                        onClick={handleRefresh}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 hover:border-slate-350 text-slate-700 rounded-lg text-xs font-semibold transition-all active:scale-95 cursor-pointer"
                     >
                         <RefreshCw size={13} className={loading ? "animate-spin text-emerald-500" : "text-slate-500"} /> Refresh Portal
                     </button>
@@ -224,25 +289,25 @@ export default function WhatsAppAutomation() {
                 <div className="flex border-b border-slate-200 gap-1">
                     <button
                         onClick={() => setActiveTab('campaigns')}
-                        className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 ${activeTab === 'campaigns' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+                        className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 cursor-pointer ${activeTab === 'campaigns' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
                     >
                         Campaign Monitors
                     </button>
                     <button
                         onClick={() => setActiveTab('compose')}
-                        className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 ${activeTab === 'compose' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+                        className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 cursor-pointer ${activeTab === 'compose' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
                     >
                         Bulk Campaign Composer
                     </button>
                     <button
                         onClick={() => setActiveTab('chat')}
-                        className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 ${activeTab === 'chat' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+                        className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 cursor-pointer ${activeTab === 'chat' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
                     >
                         Direct Chat & Timelines
                     </button>
                     <button
                         onClick={() => setActiveTab('media')}
-                        className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 ${activeTab === 'media' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+                        className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 cursor-pointer ${activeTab === 'media' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
                     >
                         Outbox Media Library
                     </button>
@@ -256,7 +321,12 @@ export default function WhatsAppAutomation() {
                         </div>
 
                         <div className="divide-y divide-slate-100">
-                            {campaigns.length === 0 ? (
+                            {loading ? (
+                                <div className="p-8 text-center space-y-2">
+                                    <RefreshCw className="animate-spin text-emerald-500 mx-auto" size={20} />
+                                    <span className="text-xs text-slate-400 font-semibold block">Loading campaigns...</span>
+                                </div>
+                            ) : campaigns.length === 0 ? (
                                 <div className="p-8 text-center text-slate-400 text-xs font-medium">
                                     No bulk campaigns launched yet. Head over to the Composer tab.
                                 </div>
@@ -267,73 +337,114 @@ export default function WhatsAppAutomation() {
                                         : 0;
 
                                     return (
-                                        <div key={campaign.id} className="p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:bg-slate-50/30 transition-all">
-                                            <div className="space-y-1.5 flex-1 min-w-0">
-                                                <div className="flex items-center gap-2">
-                                                    <h4 className="text-xs font-bold text-slate-800 truncate">{campaign.name}</h4>
-                                                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase ${campaign.status === "Running" ? "bg-blue-50 text-blue-700 animate-pulse" :
+                                        <div key={campaign.id} className="p-5 hover:bg-slate-50/15 transition-all border-b border-slate-100 last:border-0">
+                                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                                                <div className="space-y-1.5 flex-1 min-w-0">
+                                                    <div className="flex items-center gap-2">
+                                                        <h4 className="text-xs font-bold text-slate-800 truncate">{campaign.name}</h4>
+                                                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase ${campaign.status === "Running" ? "bg-blue-50 text-blue-700 animate-pulse" :
                                                             campaign.status === "Completed" ? "bg-emerald-50 text-emerald-700" :
                                                                 campaign.status === "Paused" ? "bg-amber-50 text-amber-700" :
                                                                     "bg-slate-100 text-slate-650"
-                                                        }`}>
-                                                        {campaign.status}
-                                                    </span>
-                                                </div>
-
-                                                <div className="flex items-center gap-4 text-[10px] text-slate-500 font-semibold flex-wrap">
-                                                    <span>Recipients: <b className="text-slate-700">{campaign.total_recipients}</b></span>
-                                                    <span>API Cost: <b className="text-slate-700 font-bold">Rs. {campaign.cost_total.toFixed(2)}</b></span>
-                                                    <span>Duplicates Filtered: <b className="text-slate-700">{campaign.duplicate_count}</b></span>
-                                                    <span>Errors: <b className="text-red-500">{campaign.failed_count}</b></span>
-                                                </div>
-
-                                                <div className="flex items-center gap-2 max-w-md w-full mt-2">
-                                                    <div className="flex-1 bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                                                        <div
-                                                            className={`h-full rounded-full transition-all ${campaign.status === "Completed" ? "bg-emerald-500" : "bg-emerald-450"
-                                                                }`}
-                                                            style={{ width: `${progress}%` }}
-                                                        ></div>
+                                                            }`}>
+                                                            {campaign.status}
+                                                        </span>
                                                     </div>
-                                                    <span className="text-[10px] font-bold text-slate-500">{progress}%</span>
+
+                                                    <div className="flex items-center gap-4 text-[10px] text-slate-500 font-semibold flex-wrap">
+                                                        <span>Recipients: <b className="text-slate-700">{campaign.total_recipients}</b></span>
+                                                        <span>API Cost: <b className="text-slate-700 font-bold">Rs. {campaign.cost_total.toFixed(2)}</b></span>
+                                                        <span>Duplicates Filtered: <b className="text-slate-700">{campaign.duplicate_count}</b></span>
+                                                        <span>Errors: <b className="text-red-500">{campaign.failed_count}</b></span>
+                                                    </div>
+
+                                                    <div className="flex items-center gap-2 max-w-md w-full mt-2">
+                                                        <div className="flex-1 bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                                                            <div
+                                                                className={`h-full rounded-full transition-all ${campaign.status === "Completed" ? "bg-emerald-500" : "bg-emerald-450"
+                                                                    }`}
+                                                                style={{ width: `${progress}%` }}
+                                                            ></div>
+                                                        </div>
+                                                        <span className="text-[10px] font-bold text-slate-500">{progress}%</span>
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                                                    <button
+                                                        onClick={() => setExpandedCampaignId(expandedCampaignId === campaign.id ? null : campaign.id)}
+                                                        className="p-1.5 hover:bg-slate-100 rounded border border-slate-205 text-[10px] font-bold text-slate-750 flex items-center gap-1 cursor-pointer transition-all"
+                                                    >
+                                                        {expandedCampaignId === campaign.id ? "Hide Logs" : "Outbox logs"}
+                                                    </button>
+                                                    {campaign.status === "Running" && (
+                                                        <button
+                                                            onClick={() => handleCampaignControl(campaign.id, 'pause')}
+                                                            className="p-1.5 hover:bg-amber-50 rounded border border-slate-205 text-amber-600 hover:border-amber-200 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                                                        >
+                                                            <Pause size={12} /> Pause
+                                                        </button>
+                                                    )}
+                                                    {campaign.status === "Paused" && (
+                                                        <button
+                                                            onClick={() => handleCampaignControl(campaign.id, 'resume')}
+                                                            className="p-1.5 hover:bg-blue-50 rounded border border-slate-205 text-blue-605 hover:border-blue-200 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                                                        >
+                                                            <Play size={12} /> Resume
+                                                        </button>
+                                                    )}
+                                                    {campaign.status === "Running" && (
+                                                        <button
+                                                            onClick={() => handleCampaignControl(campaign.id, 'cancel')}
+                                                            className="p-1.5 hover:bg-rose-50 rounded border border-slate-205 text-rose-600 hover:border-rose-200 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                                                        >
+                                                            <X size={12} /> Cancel
+                                                        </button>
+                                                    )}
+                                                    {campaign.failed_count > 0 && (
+                                                        <button
+                                                            onClick={() => handleCampaignControl(campaign.id, 'retry')}
+                                                            className="p-1.5 hover:bg-slate-100 rounded border border-slate-205 text-[10px] font-bold text-slate-700 flex items-center gap-1 cursor-pointer"
+                                                        >
+                                                            <RefreshCw size={12} /> Retry Failed
+                                                        </button>
+                                                    )}
                                                 </div>
                                             </div>
 
-                                            <div className="flex items-center gap-1.5 shrink-0">
-                                                {campaign.status === "Running" && (
-                                                    <button
-                                                        onClick={() => handleCampaignControl(campaign.id, 'pause')}
-                                                        className="p-1.5 hover:bg-amber-50 rounded border border-slate-205 text-amber-600 hover:border-amber-200 text-[10px] font-bold flex items-center gap-1"
-                                                    >
-                                                        <Pause size={12} /> Pause
-                                                    </button>
-                                                )}
-                                                {campaign.status === "Paused" && (
-                                                    <button
-                                                        onClick={() => handleCampaignControl(campaign.id, 'resume')}
-                                                        className="p-1.5 hover:bg-blue-50 rounded border border-slate-205 text-blue-605 hover:border-blue-200 text-[10px] font-bold flex items-center gap-1"
-                                                    >
-                                                        <Play size={12} /> Resume
-                                                    </button>
-                                                )}
-                                                {campaign.status === "Running" && (
-                                                    <button
-                                                        onClick={() => handleCampaignControl(campaign.id, 'cancel')}
-                                                        className="p-1.5 hover:bg-rose-50 rounded border border-slate-205 text-rose-600 hover:border-rose-200 text-[10px] font-bold flex items-center gap-1"
-                                                    >
-                                                        <X size={12} /> Cancel
-                                                    </button>
-                                                )}
-                                                {campaign.failed_count > 0 && (
-                                                    <button
-                                                        onClick={() => handleCampaignControl(campaign.id, 'retry')}
-                                                        className="p-1.5 hover:bg-slate-100 rounded border border-slate-205 text-[10px] font-bold text-slate-700 flex items-center gap-1"
-                                                    >
-                                                        <RefreshCw size={12} /> Retry Failed
-                                                    </button>
-                                                )}
-                                            </div>
-
+                                            {/* Expandable Outbox Recipient Logs */}
+                                            {expandedCampaignId === campaign.id && (
+                                                <div className="mt-4 border-t border-slate-100 pt-3 space-y-2 animate-in fade-in duration-200">
+                                                    <h5 className="text-[10px] font-bold text-slate-450 uppercase tracking-wider">Outbound Recipients & Statuses</h5>
+                                                    <div className="bg-slate-50/50 rounded-lg border border-slate-200 divide-y divide-slate-100 max-h-48 overflow-y-auto">
+                                                        {messages.filter(m => m.campaign_id === campaign.id).length === 0 ? (
+                                                            <div className="p-4 text-center text-[10.5px] text-slate-450 italic">
+                                                                No messages logged under this campaign yet.
+                                                            </div>
+                                                        ) : (
+                                                            messages.filter(m => m.campaign_id === campaign.id).map(msg => (
+                                                                <div key={msg.id} className="p-2.5 flex justify-between items-center text-[10.5px] font-semibold text-slate-700">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <div className="w-5 h-5 rounded-full bg-slate-200/50 text-[10px] flex items-center justify-center font-bold text-slate-600 uppercase">
+                                                                            {(msg.recipient_phone || 'L')[0]}
+                                                                        </div>
+                                                                        <span>{msg.recipient_phone}</span>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-3">
+                                                                        <span className="text-[9.5px] text-slate-450 truncate max-w-[240px] font-normal">{msg.content_text}</span>
+                                                                        <span className={`px-2 py-0.5 rounded text-[8px] font-extrabold uppercase ${msg.status === 'Read' ? 'bg-blue-105 bg-blue-50 text-blue-700' :
+                                                                            msg.status === 'Sent' || msg.status === 'Delivered' ? 'bg-emerald-55 bg-emerald-50 text-emerald-700' :
+                                                                                'bg-rose-55 bg-rose-50 text-rose-700'
+                                                                            }`}>
+                                                                            {msg.status}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+                                                            ))
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     );
                                 })
@@ -363,12 +474,18 @@ export default function WhatsAppAutomation() {
                                     <select
                                         value={selectedTemplateId}
                                         onChange={e => setSelectedTemplateId(e.target.value === '' ? '' : Number(e.target.value))}
-                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-202 rounded-lg text-xs font-semibold text-slate-705 focus:outline-none"
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-202 rounded-lg text-xs font-semibold text-slate-705 focus:outline-none cursor-pointer"
                                     >
-                                        <option value="">Select Pre-approved Template</option>
-                                        {templates.map(t => (
-                                            <option key={t.id} value={t.id}>[{t.approval_status}] {t.name}</option>
-                                        ))}
+                                        {loading ? (
+                                            <option value="">Loading templates...</option>
+                                        ) : (
+                                            <>
+                                                <option value="">Select Pre-approved Template</option>
+                                                {templates.map(t => (
+                                                    <option key={t.id} value={t.id}>[{t.approval_status}] {t.name}</option>
+                                                ))}
+                                            </>
+                                        )}
                                     </select>
                                 </div>
                                 <div>
@@ -376,32 +493,56 @@ export default function WhatsAppAutomation() {
                                     <select
                                         value={selectedGroupId}
                                         onChange={e => setSelectedGroupId(e.target.value === '' ? '' : Number(e.target.value))}
-                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-202 rounded-lg text-xs font-semibold text-slate-705 focus:outline-none"
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-202 rounded-lg text-xs font-semibold text-slate-705 focus:outline-none cursor-pointer"
                                     >
-                                        <option value="">Select Group List</option>
-                                        {groups.map(g => (
-                                            <option key={g.id} value={g.id}>{g.name}</option>
-                                        ))}
+                                        {loading ? (
+                                            <option value="">Loading target groups...</option>
+                                        ) : (
+                                            <>
+                                                <option value="">Select Group List</option>
+                                                {groups.map(g => (
+                                                    <option key={g.id} value={g.id}>{g.name}</option>
+                                                ))}
+                                            </>
+                                        )}
                                     </select>
                                 </div>
                             </div>
 
-                            <div className="border-2 border-dashed border-slate-202 rounded-xl p-6 text-center hover:bg-slate-50/50 transition-all relative">
-                                <input
-                                    type="file"
-                                    accept=".csv"
-                                    onChange={handleCsvUploadSimulate}
-                                    className="absolute inset-0 opacity-0 cursor-pointer"
-                                />
-                                <UploadCloud size={24} className="mx-auto text-emerald-500 mb-2" />
-                                <h5 className="text-xs font-bold text-slate-750">Upload Outreach CSV file</h5>
-                                <p className="text-[10px] text-slate-400 mt-1">Accepts phone, name, course headers data.</p>
-                                {csvFileContent.length > 0 && (
-                                    <div className="mt-3 inline-block px-3 py-1 bg-emerald-50 border border-emerald-100 rounded text-emerald-700 text-[10px] font-bold">
-                                        Active File: {csvFileContent.length} Rows Synced
-                                    </div>
-                                )}
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="border-2 border-dashed border-slate-202 rounded-xl p-4 text-center hover:bg-slate-50/50 transition-all relative cursor-pointer">
+                                    <input
+                                        type="file"
+                                        accept=".csv"
+                                        onChange={handleCsvUploadSimulate}
+                                        className="absolute inset-0 opacity-0 cursor-pointer"
+                                    />
+                                    <UploadCloud size={20} className="mx-auto text-emerald-500 mb-1" />
+                                    <h5 className="text-[11px] font-bold text-slate-750">Upload Outreach CSV</h5>
+                                    <p className="text-[9px] text-slate-400">Accepts phone, name headers</p>
+                                </div>
+                                <button
+                                    onClick={handleImportFromCRM}
+                                    type="button"
+                                    className="border-2 border-dashed border-emerald-250 bg-emerald-50/10 hover:bg-emerald-50/30 rounded-xl p-4 text-center transition-all flex flex-col items-center justify-center gap-1 cursor-pointer text-emerald-700 font-bold"
+                                >
+                                    <Users size={20} className="text-emerald-500" />
+                                    <h5 className="text-[11px] font-bold">Import CRM Contacts</h5>
+                                    <p className="text-[9px] text-emerald-600/90 font-medium">Auto-pull from Database</p>
+                                </button>
                             </div>
+
+                            {csvFileContent.length > 0 && (
+                                <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-lg text-emerald-800 text-[10px] font-extrabold flex items-center justify-between">
+                                    <span>Outbound list selected: {csvFileContent.length} Contacts loaded successfully.</span>
+                                    <button
+                                        onClick={() => setCsvFileContent([])}
+                                        className="text-emerald-600 hover:text-emerald-800 font-bold cursor-pointer underline grow-0"
+                                    >
+                                        Clear List
+                                    </button>
+                                </div>
+                            )}
 
                             <div className="space-y-2">
                                 <label className="block text-[10px] font-bold text-slate-450 uppercase">Outbound Attachment (Optional)</label>
@@ -409,7 +550,7 @@ export default function WhatsAppAutomation() {
                                     <select
                                         value={attachmentType}
                                         onChange={e => setAttachmentType(e.target.value as any)}
-                                        className="px-3 py-2 bg-slate-50 border border-slate-202 rounded-lg text-xs font-semibold text-slate-705"
+                                        className="px-3 py-2 bg-slate-50 border border-slate-202 rounded-lg text-xs font-semibold text-slate-705 cursor-pointer"
                                     >
                                         <option value="text">No Attachment (Text Only)</option>
                                         <option value="image">Image File (.png, .jpg)</option>
@@ -431,7 +572,7 @@ export default function WhatsAppAutomation() {
 
                             <button
                                 onClick={handleDispatchCampaign}
-                                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5"
+                                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
                             >
                                 <Send size={14} /> Dispatch WhatsApp Campaign
                             </button>
@@ -503,26 +644,60 @@ export default function WhatsAppAutomation() {
                             </div>
 
                             <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
-                                <button
-                                    onClick={() => setSelectedContactPhone('9876543210')}
-                                    className={`w-full p-3 text-left flex items-center gap-3 transition-colors ${selectedContactPhone === '9876543210' ? 'bg-emerald-50/55' : 'hover:bg-slate-100/30'}`}
-                                >
-                                    <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xs shrink-0">J</div>
-                                    <div className="min-w-0">
-                                        <p className="text-xs font-bold text-slate-800 text-normal">Jayaveer (Lead)</p>
-                                        <p className="text-[9px] text-slate-400 truncate">9876543210</p>
+                                {loading && contacts.length === 0 ? (
+                                    <div className="p-8 text-center space-y-2">
+                                        <RefreshCw className="animate-spin text-emerald-500 mx-auto" size={16} />
+                                        <span className="text-[10px] text-slate-400 font-semibold block">Loading chats...</span>
                                     </div>
-                                </button>
-                                <button
-                                    onClick={() => setSelectedContactPhone('9123456789')}
-                                    className={`w-full p-3 text-left flex items-center gap-3 transition-colors ${selectedContactPhone === '9123456789' ? 'bg-emerald-50/55' : 'hover:bg-slate-100/30'}`}
-                                >
-                                    <div className="w-8 h-8 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center font-bold text-xs shrink-0">R</div>
-                                    <div className="min-w-0">
-                                        <p className="text-xs font-bold text-slate-800 text-normal">Raman Kumar (Student)</p>
-                                        <p className="text-[9px] text-slate-400 truncate">9123456789</p>
-                                    </div>
-                                </button>
+                                ) : (
+                                    <>
+                                        {/* Dynamic DB Contacts */}
+                                        {contacts.map((contact) => {
+                                            const displayName = contact.name || `${contact.first_name || ''} ${contact.last_name || ''}`.trim() || 'Lead';
+                                            const initial = displayName[0]?.toUpperCase() || 'L';
+                                            return (
+                                                <button
+                                                    key={contact.id || contact.phone}
+                                                    onClick={() => setSelectedContactPhone(contact.phone)}
+                                                    className={`w-full p-3 text-left flex items-center gap-3 transition-colors cursor-pointer ${selectedContactPhone === contact.phone ? 'bg-emerald-50/55' : 'hover:bg-slate-100/30'}`}
+                                                >
+                                                    <div className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold text-xs shrink-0 border border-emerald-100">
+                                                        {initial}
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <p className="text-xs font-bold text-slate-800 text-normal">{displayName}</p>
+                                                        <p className="text-[9px] text-slate-400 truncate">{contact.phone}</p>
+                                                    </div>
+                                                </button>
+                                            );
+                                        })}
+                                        {/* Fallback default list if no CRM database contacts exist yet */}
+                                        {contacts.length === 0 && (
+                                            <>
+                                                <button
+                                                    onClick={() => setSelectedContactPhone('9876543210')}
+                                                    className={`w-full p-3 text-left flex items-center gap-3 transition-colors cursor-pointer ${selectedContactPhone === '9876543210' ? 'bg-emerald-50/55' : 'hover:bg-slate-100/30'}`}
+                                                >
+                                                    <div className="w-8 h-8 rounded-full bg-blue-105 bg-blue-50 text-blue-750 flex items-center justify-center font-bold text-xs shrink-0">J</div>
+                                                    <div className="min-w-0">
+                                                        <p className="text-xs font-bold text-slate-800 text-normal">Jayaveer (Lead)</p>
+                                                        <p className="text-[9px] text-slate-400 truncate">9876543210</p>
+                                                    </div>
+                                                </button>
+                                                <button
+                                                    onClick={() => setSelectedContactPhone('9123456789')}
+                                                    className={`w-full p-3 text-left flex items-center gap-3 transition-colors cursor-pointer ${selectedContactPhone === '9123456789' ? 'bg-emerald-50/55' : 'hover:bg-slate-100/30'}`}
+                                                >
+                                                    <div className="w-8 h-8 rounded-full bg-purple-105 bg-purple-50 text-purple-750 flex items-center justify-center font-bold text-xs shrink-0">R</div>
+                                                    <div className="min-w-0">
+                                                        <p className="text-xs font-bold text-slate-800 text-normal">Raman Kumar (Student)</p>
+                                                        <p className="text-[9px] text-slate-400 truncate">9123456789</p>
+                                                    </div>
+                                                </button>
+                                            </>
+                                        )}
+                                    </>
+                                )}
                             </div>
                         </div>
 
@@ -570,7 +745,7 @@ export default function WhatsAppAutomation() {
                                             />
                                             <button
                                                 onClick={handleSendDirectMessage}
-                                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1"
+                                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer"
                                             >
                                                 Send <Send size={11} />
                                             </button>
@@ -579,13 +754,13 @@ export default function WhatsAppAutomation() {
                                         <div className="flex items-center gap-2 flex-wrap">
                                             <button
                                                 onClick={() => { setDirectAttachmentType('image'); setDirectAttachmentUrl('https://picsum.photos/300/200'); toast.success('Mock Image attached.'); }}
-                                                className="flex items-center gap-1 px-2 py-1 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded text-[9.5px] font-semibold text-slate-600"
+                                                className="flex items-center gap-1 px-2 py-1 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded text-[9.5px] font-semibold text-slate-600 cursor-pointer"
                                             >
                                                 <Image size={11} className="text-blue-500" /> Apply Image
                                             </button>
                                             <button
                                                 onClick={() => { setDirectAttachmentType('document'); setDirectAttachmentUrl('https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'); toast.success('Mock PDF attached.'); }}
-                                                className="flex items-center gap-1 px-2 py-1 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded text-[9.5px] font-semibold text-slate-600"
+                                                className="flex items-center gap-1 px-2 py-1 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded text-[9.5px] font-semibold text-slate-600 cursor-pointer"
                                             >
                                                 <FileText size={11} className="text-red-500" /> Apply Syllabus.pdf
                                             </button>

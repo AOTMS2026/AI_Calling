@@ -1,13 +1,32 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Response
 from sqlmodel import Session, select
-from typing import List, Optional
+from typing import List, Optional, Any
 from datetime import datetime
 from pydantic import BaseModel
+import json
 
 from app.database.connection import get_session
 from app.api.dependencies import get_current_user
 from app.models.models_todo import Todo, TodoActivity
 from app.models.domain import User, Campaign, InboundCampaign
+from app.core.redis_client import get_cache, set_cache, delete_cache, generate_cache_key
+
+def serialize_models(models: List[Any]) -> List[dict]:
+    serialized = []
+    for m in models:
+        try:
+            serialized.append(json.loads(m.model_dump_json()))
+        except AttributeError:
+            serialized.append(json.loads(m.json()))
+    return serialized
+
+async def invalidate_todo_caches(user_id: int):
+    try:
+        await delete_cache(f"todos_{user_id}")
+        await delete_cache(f"todos_activities_{user_id}")
+        await delete_cache(f"todos_sos_{user_id}")
+    except Exception as e:
+        print(f"Failed to invalidate todo caches: {e}")
 
 router = APIRouter(prefix="/todos", tags=["todos"])
 
@@ -39,11 +58,18 @@ class TodoUpdate(BaseModel):
 
 @router.get("/")
 async def list_todos(
+    response: Response,
     status: Optional[str] = None,
     priority: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
+    response.headers["Cache-Control"] = "public, max-age=10, s-maxage=60"
+    cache_key = generate_cache_key(f"todos_{current_user.id}", status=status, priority=priority)
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return cached
+
     query = select(Todo).where(Todo.user_id == current_user.id)
     if status:
         query = query.where(Todo.status == status)
@@ -52,24 +78,42 @@ async def list_todos(
     
     query = query.order_by(Todo.created_at.desc())
     todos = session.exec(query).all()
-    return {"status": "success", "data": todos}
+    res = {"status": "success", "data": serialize_models(todos)}
+    await set_cache(cache_key, res, ttl_seconds=30)
+    return res
 
 @router.get("/activities")
 async def list_activities(
+    response: Response,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
+    response.headers["Cache-Control"] = "public, max-age=10, s-maxage=60"
+    cache_key = generate_cache_key(f"todos_activities_{current_user.id}")
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return cached
+
     # Fetch activities by joining Todo table to check ownership
     query = select(TodoActivity).join(Todo, Todo.id == TodoActivity.todo_id).where(Todo.user_id == current_user.id)
     query = query.order_by(TodoActivity.timestamp.desc()).limit(50)
     activities = session.exec(query).all()
-    return {"status": "success", "data": activities}
+    res = {"status": "success", "data": serialize_models(activities)}
+    await set_cache(cache_key, res, ttl_seconds=30)
+    return res
 
 @router.get("/sos-alerts")
 async def list_sos_alerts(
+    response: Response,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
+    response.headers["Cache-Control"] = "public, max-age=10, s-maxage=60"
+    cache_key = generate_cache_key(f"todos_sos_{current_user.id}")
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return cached
+
     # Fetch active SOS priority tasks
     query = select(Todo).where(
         Todo.user_id == current_user.id,
@@ -77,7 +121,9 @@ async def list_sos_alerts(
         Todo.status != "Completed"
     ).order_by(Todo.created_at.desc())
     alerts = session.exec(query).all()
-    return {"status": "success", "data": alerts}
+    res = {"status": "success", "data": serialize_models(alerts)}
+    await set_cache(cache_key, res, ttl_seconds=30)
+    return res
 
 @router.post("/")
 async def create_todo(
@@ -112,6 +158,7 @@ async def create_todo(
     session.add(activity)
     session.commit()
     
+    await invalidate_todo_caches(current_user.id)
     return {"status": "success", "data": new_todo}
 
 @router.patch("/{todo_id}")
@@ -157,6 +204,7 @@ async def update_todo(
     session.add(activity)
     session.commit()
     
+    await invalidate_todo_caches(current_user.id)
     return {"status": "success", "data": todo}
 
 @router.delete("/{todo_id}")
@@ -179,4 +227,5 @@ async def delete_todo(
     
     session.delete(todo)
     session.commit()
+    await invalidate_todo_caches(current_user.id)
     return {"status": "success", "message": "Task completed and deleted successfully"}

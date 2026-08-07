@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Response
 from sqlmodel import Session, select
 from typing import List, Optional
 from datetime import datetime, timedelta
@@ -15,6 +15,29 @@ from app.models.models_whatsapp import (
     WhatsAppImportLog
 )
 from app.models.domain import User
+from app.core.redis_client import get_cache, set_cache, delete_cache, generate_cache_key
+
+
+from typing import Any
+
+def serialize_models(models: List[Any]) -> List[dict]:
+    serialized = []
+    for m in models:
+        try:
+            serialized.append(json.loads(m.model_dump_json()))
+        except AttributeError:
+            serialized.append(json.loads(m.json()))
+    return serialized
+
+async def invalidate_whatsapp_caches(user_id: int):
+    try:
+        await delete_cache(generate_cache_key("whatsapp_campaigns", user_id=user_id))
+        await delete_cache(generate_cache_key("whatsapp_templates", user_id=user_id))
+        await delete_cache(generate_cache_key("whatsapp_groups", user_id=user_id))
+        await delete_cache(generate_cache_key("whatsapp_messages", user_id=user_id))
+    except Exception as e:
+        print(f"Failed to invalidate whatsapp caching keys: {e}")
+
 
 router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
 
@@ -157,11 +180,19 @@ def process_messages_queue(campaign_id: int, user_id: int):
         session.commit()
 
 @router.get("/campaigns", response_model=List[WhatsAppCampaign])
-def get_campaigns(session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
-    return session.exec(select(WhatsAppCampaign).where(WhatsAppCampaign.user_id == current_user.id)).all()
+async def get_campaigns(response: Response, session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+    response.headers["Cache-Control"] = "public, max-age=10, s-maxage=60"
+    cache_key = generate_cache_key("whatsapp_campaigns", user_id=current_user.id)
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return cached
+
+    campaigns = session.exec(select(WhatsAppCampaign).where(WhatsAppCampaign.user_id == current_user.id)).all()
+    await set_cache(cache_key, serialize_models(campaigns), ttl_seconds=300)
+    return campaigns
 
 @router.post("/campaigns")
-def create_campaign(
+async def create_campaign(
     payload: CampaignCreate, 
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session), 
@@ -202,11 +233,13 @@ def create_campaign(
         session.add(msg)
     
     session.commit()
+    await invalidate_whatsapp_caches(current_user.id)
     background_tasks.add_task(process_messages_queue, campaign.id, current_user.id)
     return {"message": "WhatsApp campaign queued for dispatch.", "campaign_id": campaign.id}
 
+
 @router.post("/campaigns/{id}/pause")
-def pause_campaign(id: int, session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+async def pause_campaign(id: int, session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
     campaign = session.exec(
         select(WhatsAppCampaign)
         .where(WhatsAppCampaign.id == id)
@@ -217,10 +250,11 @@ def pause_campaign(id: int, session: Session = Depends(get_session), current_use
     campaign.status = "Paused"
     session.add(campaign)
     session.commit()
+    await invalidate_whatsapp_caches(current_user.id)
     return {"message": "Campaign paused successfully."}
 
 @router.post("/campaigns/{id}/resume")
-def resume_campaign(
+async def resume_campaign(
     id: int, 
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session), 
@@ -236,11 +270,12 @@ def resume_campaign(
     campaign.status = "Running"
     session.add(campaign)
     session.commit()
+    await invalidate_whatsapp_caches(current_user.id)
     background_tasks.add_task(process_messages_queue, campaign.id, current_user.id)
     return {"message": "Campaign resumed successfully."}
 
 @router.post("/campaigns/{id}/cancel")
-def cancel_campaign(id: int, session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+async def cancel_campaign(id: int, session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
     campaign = session.exec(
         select(WhatsAppCampaign)
         .where(WhatsAppCampaign.id == id)
@@ -251,10 +286,11 @@ def cancel_campaign(id: int, session: Session = Depends(get_session), current_us
     campaign.status = "Cancelled"
     session.add(campaign)
     session.commit()
+    await invalidate_whatsapp_caches(current_user.id)
     return {"message": "Campaign cancelled successfully."}
 
 @router.post("/campaigns/{id}/retry-failed")
-def retry_failed_campaign_messages(
+async def retry_failed_campaign_messages(
     id: int,
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
@@ -284,16 +320,25 @@ def retry_failed_campaign_messages(
     campaign.status = "Running"
     session.add(campaign)
     session.commit()
+    await invalidate_whatsapp_caches(current_user.id)
     background_tasks.add_task(process_messages_queue, id, current_user.id)
     return {"message": f"Re-queued {len(failed)} failed campaign messages."}
 
 @router.get("/templates")
-def get_templates(session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+async def get_templates(response: Response, session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+    response.headers["Cache-Control"] = "public, max-age=10, s-maxage=60"
+    cache_key = generate_cache_key("whatsapp_templates", user_id=current_user.id)
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return cached
+
     seed_templates_if_empty(session, current_user.id)
-    return session.exec(select(WhatsAppTemplate).where(WhatsAppTemplate.user_id == current_user.id)).all()
+    templates = session.exec(select(WhatsAppTemplate).where(WhatsAppTemplate.user_id == current_user.id)).all()
+    await set_cache(cache_key, serialize_models(templates), ttl_seconds=300)
+    return templates
 
 @router.post("/templates")
-def create_template(name: str, content: str, variables: List[str], session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+async def create_template(name: str, content: str, variables: List[str], session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
     tpl = WhatsAppTemplate(
         name=name,
         content=content,
@@ -303,24 +348,41 @@ def create_template(name: str, content: str, variables: List[str], session: Sess
     )
     session.add(tpl)
     session.commit()
+    await invalidate_whatsapp_caches(current_user.id)
     return {"message": "Template created successfully.", "template": tpl}
 
 @router.get("/groups")
-def get_groups(session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+async def get_groups(response: Response, session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+    response.headers["Cache-Control"] = "public, max-age=10, s-maxage=60"
+    cache_key = generate_cache_key("whatsapp_groups", user_id=current_user.id)
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return cached
+
     seed_groups_if_empty(session, current_user.id)
-    return session.exec(select(WhatsAppGroup).where(WhatsAppGroup.user_id == current_user.id)).all()
+    groups = session.exec(select(WhatsAppGroup).where(WhatsAppGroup.user_id == current_user.id)).all()
+    await set_cache(cache_key, serialize_models(groups), ttl_seconds=300)
+    return groups
 
 @router.get("/messages", response_model=List[WhatsAppMessage])
-def get_messages(session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
-    return session.exec(
+async def get_messages(response: Response, session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+    response.headers["Cache-Control"] = "public, max-age=10, s-maxage=60"
+    cache_key = generate_cache_key("whatsapp_messages", user_id=current_user.id)
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return cached
+
+    messages = session.exec(
         select(WhatsAppMessage)
         .where(WhatsAppMessage.user_id == current_user.id)
         .order_by(WhatsAppMessage.id.desc())
         .limit(200)
     ).all()
+    await set_cache(cache_key, serialize_models(messages), ttl_seconds=300)
+    return messages
 
 @router.post("/messages/send")
-def send_single_message(
+async def send_single_message(
     payload: SingleMessageSend, 
     session: Session = Depends(get_session), 
     current_user: User = Depends(get_current_user)
@@ -338,12 +400,11 @@ def send_single_message(
     session.add(msg)
     session.commit()
     session.refresh(msg)
-    
-    # Trigger mockup read status asynchronously after 3 seconds
+    await invalidate_whatsapp_caches(current_user.id)
     return {"message": "Single message dispatched to Meta API.", "data": msg}
 
 @router.post("/webhook")
-def receive_status_webhook(payload: dict, session: Session = Depends(get_session)):
+async def receive_status_webhook(payload: dict, session: Session = Depends(get_session)):
     # Meta webhook simulator
     message_id = payload.get("message_id")
     status = payload.get("status") # Sent, Delivered, Read, Failed
@@ -353,4 +414,5 @@ def receive_status_webhook(payload: dict, session: Session = Depends(get_session
             msg.status = status
             session.add(msg)
             session.commit()
+            await invalidate_whatsapp_caches(msg.user_id)
     return {"status": "ok"}

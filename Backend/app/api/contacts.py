@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, BackgroundTasks, Response
 from sqlmodel import Session, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.database.connection import get_session, engine
@@ -10,6 +10,25 @@ import os
 import tempfile
 import openpyxl
 import uuid
+import json
+from typing import List, Any
+from app.core.redis_client import get_cache, set_cache, delete_cache, generate_cache_key
+
+def serialize_models(models: List[Any]) -> List[dict]:
+    serialized = []
+    for m in models:
+        try:
+            serialized.append(json.loads(m.model_dump_json()))
+        except AttributeError:
+            serialized.append(json.loads(m.json()))
+    return serialized
+
+async def invalidate_contact_caches():
+    try:
+        # Contacts doesn't have tenant structures, so delete global keys
+        await delete_cache("contacts_global")
+    except Exception as e:
+        print(f"Failed to invalidate contact caches: {e}")
 
 router = APIRouter(prefix="/contacts", tags=["contacts"])
 
@@ -92,6 +111,17 @@ def process_bulk_excel(file_path: str, job_id: str):
                 
             UPLOAD_JOBS[job_id]["progress"] = 100
             UPLOAD_JOBS[job_id]["status"] = "completed"
+            
+            try:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(invalidate_contact_caches())
+                else:
+                    loop.run_until_complete(invalidate_contact_caches())
+            except Exception as cache_err:
+                print(f"Failed cache invalidation in import: {cache_err}")
+
                 
     except Exception as e:
         print(f"Failed background import: {e}")
@@ -162,18 +192,27 @@ async def upload_contacts(
             db.add(contact)
             
         db.commit()
+        await invalidate_contact_caches()
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error parsing CSV: {str(e)}")
         
     return {"message": "Contacts uploaded and saved to PostgreSQL successfully"}
 
 @router.get("/")
-def get_contacts(
+async def get_contacts(
+    response: Response,
     db: Session = Depends(get_session), 
     limit: int = 500,
     current_user: User = Depends(get_current_user)
 ):
+    response.headers["Cache-Control"] = "public, max-age=10, s-maxage=60"
+    cache_key = generate_cache_key("contacts_global", limit=limit)
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return cached
+
     contacts = db.exec(select(Contact).order_by(Contact.phone.asc()).limit(limit)).all()
+    await set_cache(cache_key, serialize_models(contacts), ttl_seconds=30)
     return contacts
 
 @router.post("/dial-single/{phone}")
@@ -187,7 +226,7 @@ def manual_dial_contact(phone: str, db: Session = Depends(get_session)):
     return {"message": "Call Dispatched architecture successfully removed.", "vendor_sid": new_call.vendor_call_sid}
 
 @router.post("/single")
-def create_single_contact(
+async def create_single_contact(
     contact: Contact, 
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
@@ -198,4 +237,5 @@ def create_single_contact(
     stmt = pg_insert(Contact).values([contact.model_dump()]).on_conflict_do_nothing()
     db.execute(stmt)
     db.commit()
+    await invalidate_contact_caches()
     return {"message": "Contact securely added to PostgreSQL."}

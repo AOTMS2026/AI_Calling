@@ -14,11 +14,8 @@ from app.models.domain import User, OTP
 from app.schemas.domain import UserCreateRequest, VerifyOTPRequest, LoginRequest, Token, ForgotPasswordRequest, ResetPasswordRequest
 from app.core.security import get_password_hash, verify_password, create_access_token, create_refresh_token
 from app.core.config import settings
+from app.core.redis_client import redis_client
 
-# In-memory brute force protection state
-# In a true distributed production environment, this would utilize Redis.
-# Format: { "email@example.com": {"attempts": 5, "locked_until": datetime} }
-FAILED_LOGINS = {}
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
 
@@ -167,46 +164,41 @@ async def reset_password(request: ResetPasswordRequest, db: Session = Depends(ge
     return {"message": "Password has been reset successfully."}
 
 @router.post("/login", response_model=Token)
-def login(request: LoginRequest, db: Session = Depends(get_session)):
+async def login(request: LoginRequest, db: Session = Depends(get_session)):
     email_key = request.email.lower()
     
     # 1. Check if user is currently locked out
-    if email_key in FAILED_LOGINS:
-        lock_status = FAILED_LOGINS[email_key]
-        if lock_status["attempts"] >= MAX_FAILED_ATTEMPTS:
-            if datetime.utcnow() < lock_status["locked_until"]:
-                time_left = (lock_status["locked_until"] - datetime.utcnow()).seconds // 60
-                raise HTTPException(
-                    status_code=429, 
-                    detail=f"Account locked due to too many failed login attempts. Please try again in {time_left + 1} minutes."
-                )
-            else:
-                # Lockout expired, reset their slate
-                del FAILED_LOGINS[email_key]
+    lockout_ttl = await redis_client.ttl(f"lockout::{email_key}")
+    if lockout_ttl > 0:
+        time_left = lockout_ttl // 60
+        raise HTTPException(
+            status_code=429, 
+            detail=f"Account locked due to too many failed login attempts. Please try again in {time_left + 1} minutes."
+        )
 
     user = db.exec(select(User).where(User.email == request.email)).first()
     
     # 2. Check credentials
     if not user or not verify_password(request.password, user.hashed_password):
         # Record the failed attempt
-        if email_key not in FAILED_LOGINS:
-            FAILED_LOGINS[email_key] = {"attempts": 1, "locked_until": datetime.utcnow()}
-        else:
-            FAILED_LOGINS[email_key]["attempts"] += 1
+        attempts = await redis_client.incr(f"attempts::{email_key}")
+        if attempts == 1:
+            await redis_client.expire(f"attempts::{email_key}", LOCKOUT_MINUTES * 60)
             
-        if FAILED_LOGINS[email_key]["attempts"] >= MAX_FAILED_ATTEMPTS:
-            FAILED_LOGINS[email_key]["locked_until"] = datetime.utcnow() + timedelta(minutes=LOCKOUT_MINUTES)
+        if attempts >= MAX_FAILED_ATTEMPTS:
+            await redis_client.setex(f"lockout::{email_key}", LOCKOUT_MINUTES * 60, "locked")
+            await redis_client.delete(f"attempts::{email_key}")
             raise HTTPException(
                 status_code=429, 
                 detail=f"Security Alert: Account locked due to {MAX_FAILED_ATTEMPTS} failed attempts. Please try again in {LOCKOUT_MINUTES} minutes."
             )
             
-        attempts_left = MAX_FAILED_ATTEMPTS - FAILED_LOGINS[email_key]["attempts"]
+        attempts_left = MAX_FAILED_ATTEMPTS - attempts
         raise HTTPException(status_code=401, detail=f"Invalid Credentials. Warning: {attempts_left} attempts remaining before account lockout.")
 
     # 3. Successful login, wipe all failure records
-    if email_key in FAILED_LOGINS:
-        del FAILED_LOGINS[email_key]
+    await redis_client.delete(f"attempts::{email_key}")
+    await redis_client.delete(f"lockout::{email_key}")
 
     access_token = create_access_token(data={"sub": user.email})
     refresh_token = create_refresh_token(data={"sub": user.email})

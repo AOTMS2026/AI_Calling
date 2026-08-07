@@ -1,7 +1,7 @@
 import os
 import httpx
 import json
-from fastapi import APIRouter, Request, HTTPException, BackgroundTasks, Depends
+from fastapi import APIRouter, Request, HTTPException, BackgroundTasks, Depends, Response
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from app.core.config import settings
@@ -13,6 +13,8 @@ from app.api.dependencies import get_current_user
 from datetime import datetime
 import urllib.parse
 import asyncio
+from app.core.redis_client import get_cache, set_cache, delete_cache, generate_cache_key
+
 
 router = APIRouter(prefix="/api/ravan", tags=["ravan"])
 
@@ -827,7 +829,7 @@ async def get_global_contacts(
                 })
                     
         payload = {"success": True, "data": payload_data}
-        await set_cache(cache_key, payload, 30) # High-turnover cache 30s
+        await set_cache(cache_key, payload, 300) # Fast cached lookup for 5 minutes
         return payload
 
 @router.get("/contacts/{contact_id}/detail")
@@ -1431,14 +1433,37 @@ async def sync_call_metrics_to_db(agent_id: str):
                     
                     db.commit()
                     print(f"[METRICS SYNC] agent_id={agent_id[:8]}... total={total_c} success={succ_c} rate={succ_rate}%")
+                    try:
+                        from app.core.redis_client import delete_cache
+                        import asyncio
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            loop.create_task(delete_cache("dashboard_metrics_"))
+                        else:
+                            loop.run_until_complete(delete_cache("dashboard_metrics_"))
+                    except Exception as cache_err:
+                        print(f"Failed to invalidate dashboard cache: {cache_err}")
     except Exception as e:
         print("Failed Async DB Metrics Sync Trigger:", str(e))
 
 @router.get("/dashboard/metrics")
-async def get_dashboard_metrics_trigger(background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user), db: Session = Depends(get_session)):
+async def get_dashboard_metrics_trigger(
+    response: Response,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
     """
     Renders PostgreSQL aggregated Dashboard metrics intelligently across unified agent fleets!
+    With Redis caching and Edge CDN support.
     """
+    response.headers["Cache-Control"] = "public, max-age=10, s-maxage=60"
+    cache_key = f"dashboard_metrics_{current_user.id}"
+    
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         agent_uuids = [current_user.ravan_agent_id] if current_user.ravan_agent_id else []
         
@@ -1453,7 +1478,7 @@ async def get_dashboard_metrics_trigger(background_tasks: BackgroundTasks, curre
         target_agent_uuids = set(agent_uuids)
 
         if current_user.role == 'admin':
-            # For admin, we should maybe pull everything, but for now fallback to the admin's UUID default
+            # For admin, we should work default
             target_agent_uuids.add("ROOT_DEFAULT")
 
         metrics = []
@@ -1465,7 +1490,9 @@ async def get_dashboard_metrics_trigger(background_tasks: BackgroundTasks, curre
                 metrics.append(metric)
 
         if not metrics:
-            return {"data": None}
+            res = {"data": None}
+            await set_cache(cache_key, res, ttl_seconds=30)
+            return res
 
         # Mathematical pure DB aggregation across all user agents
         agg = {
@@ -1498,7 +1525,10 @@ async def get_dashboard_metrics_trigger(background_tasks: BackgroundTasks, curre
 
         agg["success_rate"] = round((agg["success_calls"] / agg["total_calls"] * 100), 2) if agg["total_calls"] > 0 else 0.0
         
-        return {"data": agg}
+        res = {"data": agg}
+        # Cache for short duration as metrics can change dynamically
+        await set_cache(cache_key, res, ttl_seconds=30)
+        return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
