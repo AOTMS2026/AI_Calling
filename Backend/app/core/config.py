@@ -13,13 +13,20 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     
-    # External APIs
-    N8N_WEBHOOK_URL: str = "https://aotms.app.n8n.cloud/webhook/Email"
-    N8N_RESET_PASSWORD_URL: str = "https://aotms.app.n8n.cloud/webhook/AI%20CALLING"
+    # External APIs (Optional fallback)
+    N8N_WEBHOOK_URL: Optional[str] = None
+    N8N_RESET_PASSWORD_URL: Optional[str] = None
     SARVAM_API: Optional[str] = None
     RAVAN_AGNI_AI: str = ""
     RAVAN_ORG_ID: Optional[str] = None
     AGENT_ID: Optional[str] = None
+    
+    # Brevo SMTP Connection Details
+    BREVO_SMTP_HOST: str = "smtp-relay.brevo.com"
+    BREVO_SMTP_PORT: int = 587
+    BREVO_SMTP_USER: str = ""
+    BREVO_SMTP_PASS: str = ""
+    BREVO_SMTP_FROM: str = "aotms.marketing@gmail.com"
     
     # Exotel Integration
     EXOTEL_SID: str = ""

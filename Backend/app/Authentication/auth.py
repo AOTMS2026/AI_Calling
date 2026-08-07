@@ -1,5 +1,5 @@
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, BackgroundTasks
 from sqlmodel import Session, select
 from datetime import datetime, timedelta
 import random
@@ -15,6 +15,7 @@ from app.schemas.domain import UserCreateRequest, VerifyOTPRequest, LoginRequest
 from app.core.security import get_password_hash, verify_password, create_access_token, create_refresh_token
 from app.core.config import settings
 from app.core.redis_client import redis_client
+from app.utils.email import send_smtp_email, get_otp_html_template
 
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
@@ -25,7 +26,7 @@ def generate_otp():
     return "".join(random.choices(string.digits, k=6))
 
 @router.post("/register")
-async def register(request: UserCreateRequest, db: Session = Depends(get_session)):
+async def register(request: UserCreateRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_session)):
     if len(request.name) < 3:
         raise HTTPException(status_code=400, detail="Name must be at least 3 characters")
     
@@ -66,17 +67,14 @@ async def register(request: UserCreateRequest, db: Session = Depends(get_session
     db.add(new_otp)
     db.commit()
     
-    # Trigger isolated Registration webhook asynchronously
-    async with httpx.AsyncClient() as client:
-        try:
-            await client.post(settings.N8N_WEBHOOK_URL, json={
-                "email": new_user.email,
-                "name": new_user.name,
-                "otp": otp_code,
-                "context": "Account Registration"
-            })
-        except Exception as e:
-            print(f"Webhook error: {e}")
+    # Dispatch OTP Code via Brevo SMTP in safe Background Task
+    email_html = get_otp_html_template(new_user.name, otp_code, "Account Registration")
+    background_tasks.add_task(
+        send_smtp_email,
+        new_user.email,
+        "AOTMS: Your Account Verification OTP",
+        email_html
+    )
             
     return {"message": "User created. OTP sent to email."}
 
@@ -99,7 +97,7 @@ def verify_otp(request: VerifyOTPRequest, db: Session = Depends(get_session)):
     return {"message": "OTP Verified successfully."}
 
 @router.post("/forgot-password")
-async def forgot_password(request: ForgotPasswordRequest, db: Session = Depends(get_session)):
+async def forgot_password(request: ForgotPasswordRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_session)):
     user_db = db.exec(select(User).where(User.email == request.email)).first()
     if not user_db:
         # Don't reveal user existence, but for now we raise 404 to let frontend show gracefully
@@ -116,18 +114,14 @@ async def forgot_password(request: ForgotPasswordRequest, db: Session = Depends(
     db.add(new_otp)
     db.commit()
     
-    # Trigger webhook asynchronously via explicit Reset Password URL
-    async with httpx.AsyncClient() as client:
-        try:
-            await client.post(settings.N8N_RESET_PASSWORD_URL, json={
-                "email": user_db.email,
-                "name": user_db.name,
-                "otp": otp_code,
-                "context": "Password Reset"
-            })
-        except Exception as e:
-            print(f"Webhook error: {e}")
-            raise HTTPException(status_code=500, detail="Failed to dispatch security email.")
+    # Dispatch code via Brevo SMTP in Background Task
+    email_html = get_otp_html_template(user_db.name, otp_code, "Password Reset")
+    background_tasks.add_task(
+        send_smtp_email,
+        user_db.email,
+        "AOTMS: Your Password Reset OTP Verification Code",
+        email_html
+    )
             
     return {"message": "Password reset OTP dispatched successfully."}
 
