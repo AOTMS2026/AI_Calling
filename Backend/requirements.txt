@@ -40,3 +40,4 @@ tzdata==2026.3
 uvicorn==0.23.2
 watchfiles==1.2.0
 websockets==16.1
+redis==5.0.1
