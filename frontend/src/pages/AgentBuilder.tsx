@@ -961,14 +961,33 @@ export function AgentBuilder() {
 
                             {testCallState === 'idle' ? (
                                 <div className="p-4 flex flex-col flex-1 gap-4">
-                                    <div>
-                                        <label className="block text-[11px] font-bold text-gray-500 mb-1.5 uppercase tracking-widest">From Number</label>
-                                        <input type="text" value={testCallFrom} onChange={(e) => setTestCallFrom(e.target.value)} placeholder="+1234567890" className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 focus:outline-none focus:border-[#0a8ea0]" />
+                                    <div className="flex bg-gray-100 p-1 rounded-xl">
+                                        <button
+                                            onClick={() => setTestCallMode('phone')}
+                                            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors ${testCallMode === 'phone' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+                                        >
+                                            Phone Call
+                                        </button>
+                                        <button
+                                            onClick={() => setTestCallMode('web')}
+                                            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors ${testCallMode === 'web' ? 'bg-white shadow-sm text-[#0a8ea0]' : 'text-gray-500 hover:text-gray-700'}`}
+                                        >
+                                            Web Call
+                                        </button>
                                     </div>
-                                    <div>
-                                        <label className="block text-[11px] font-bold text-gray-500 mb-1.5 uppercase tracking-widest">To Number</label>
-                                        <input type="text" value={testCallTo} onChange={(e) => setTestCallTo(e.target.value)} placeholder="+0987654321" className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 focus:outline-none focus:border-[#0a8ea0]" />
-                                    </div>
+                                    
+                                    {testCallMode === 'phone' && (
+                                        <>
+                                            <div>
+                                                <label className="block text-[11px] font-bold text-gray-500 mb-1.5 uppercase tracking-widest">From Number</label>
+                                                <input type="text" value={testCallFrom} onChange={(e) => setTestCallFrom(e.target.value)} placeholder="+1234567890" className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 focus:outline-none focus:border-[#0a8ea0]" />
+                                            </div>
+                                            <div>
+                                                <label className="block text-[11px] font-bold text-gray-500 mb-1.5 uppercase tracking-widest">To Number</label>
+                                                <input type="text" value={testCallTo} onChange={(e) => setTestCallTo(e.target.value)} placeholder="+0987654321" className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 focus:outline-none focus:border-[#0a8ea0]" />
+                                            </div>
+                                        </>
+                                    )}
 
                                     <div className="border border-gray-100 rounded-xl p-4 bg-white">
                                         <span className="text-[11px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1.5 mb-3">{'{ }'} PROMPT VARIABLES</span>
@@ -1009,7 +1028,7 @@ export function AgentBuilder() {
                                             className="w-full flex items-center justify-center gap-2 py-3 bg-[#0a8ea0] hover:bg-[#077a8a] text-white rounded-[12px] font-bold text-[13px] tracking-wide transition-colors disabled:opacity-50 shadow-[0_4px_14px_0_rgba(10,142,160,0.39)]"
                                         >
                                             {webCallLoading ? <Loader2 size={16} className="animate-spin" /> : <PhoneCall size={16} />}
-                                            Start Phone Call
+                                            Start {testCallMode === 'web' ? 'Web' : 'Phone'} Call
                                         </button>
                                     </div>
                                 </div>
