@@ -359,7 +359,10 @@ async def get_my_phone_numbers(
             
     # Ultimate safeguard for broken databases where an orphaned number exists but no admin controls it
     if not numbers:
-        numbers = db.exec(select(PurchasedPhoneNumber)).all()
+        if current_user.role == 'admin':
+            numbers = db.exec(select(PurchasedPhoneNumber)).all()
+        else:
+            numbers = []
             
     return {"success": True, "data": numbers}
 
@@ -419,12 +422,23 @@ async def get_outbound_campaigns(limit: int = 100, offset: int = 0, current_user
             # Explicit User Override: Force physical isolation of the exact .env CAMPAIGN_ID above all
             env_campaign_id = os.environ.get("CAMPAIGN_ID") or os.environ.get("CAMPAIGNS")
             if env_campaign_id:
-                isolated_url = f"https://api.ravan.ai/api/v1/campaigns/{env_campaign_id}"
-                isolated_res = await client.get(isolated_url, headers=headers)
-                if isolated_res.status_code == 200:
-                    isolated_data = isolated_res.json()
-                    if "data" in isolated_data:
-                        return {"success": True, "data": [isolated_data["data"]]}
+                # If user is not admin, verify access to this campaign
+                is_auth = True
+                if current_user.role != 'admin':
+                    assigned = db.exec(select(Assign_Campaigns.campaign_id).where(Assign_Campaigns.user_id == current_user.id)).all()
+                    allowed_ids = set(assigned)
+                    if current_user.ravan_campaign_id:
+                        allowed_ids.add(current_user.ravan_campaign_id)
+                    if env_campaign_id not in allowed_ids:
+                        is_auth = False
+                
+                if is_auth:
+                    isolated_url = f"https://api.ravan.ai/api/v1/campaigns/{env_campaign_id}"
+                    isolated_res = await client.get(isolated_url, headers=headers)
+                    if isolated_res.status_code == 200:
+                        isolated_data = isolated_res.json()
+                        if "data" in isolated_data:
+                            return {"success": True, "data": [isolated_data["data"]]}
             
             # If no manual override exists in .env, natively query the global Ravan array
             response = await client.get(url, params=params, headers=headers)
@@ -454,10 +468,22 @@ async def get_outbound_campaigns(limit: int = 100, offset: int = 0, current_user
             raise HTTPException(status_code=500, detail=f"Network error fetching campaigns from Ravan: {str(e)}")
 
 @router.get("/campaigns/{campaign_id}")
-async def get_campaign(campaign_id: str):
+async def get_campaign(
+    campaign_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
     api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
     if not api_key:
         raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
+
+    if current_user.role != 'admin':
+        assigned = db.exec(select(Assign_Campaigns.campaign_id).where(Assign_Campaigns.user_id == current_user.id)).all()
+        allowed_ids = set(assigned)
+        if current_user.ravan_campaign_id:
+            allowed_ids.add(current_user.ravan_campaign_id)
+        if campaign_id not in allowed_ids:
+            raise HTTPException(status_code=403, detail="Not authorized to access this campaign.")
 
     url = f"https://api.ravan.ai/api/v1/campaigns/{campaign_id}"
     headers = {
@@ -673,10 +699,22 @@ async def get_campaign_analytics(campaign_id: str):
             raise HTTPException(status_code=500, detail=f"Network bridge broken tracking campaign metrics: {str(e)}")
 
 @router.delete("/campaigns/{campaign_id}")
-async def delete_campaign(campaign_id: str, db: Session = Depends(get_session)):
+async def delete_campaign(
+    campaign_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
     api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
     if not api_key:
         raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
+
+    if current_user.role != 'admin':
+        assigned = db.exec(select(Assign_Campaigns.campaign_id).where(Assign_Campaigns.user_id == current_user.id)).all()
+        allowed_ids = set(assigned)
+        if current_user.ravan_campaign_id:
+            allowed_ids.add(current_user.ravan_campaign_id)
+        if campaign_id not in allowed_ids:
+            raise HTTPException(status_code=403, detail="Not authorized to access this campaign.")
 
     # 1. Clean up from local database first: Assign_Campaigns table
     try:
@@ -710,10 +748,24 @@ async def delete_campaign(campaign_id: str, db: Session = Depends(get_session)):
             raise HTTPException(status_code=500, detail=f"Network error deleting campaign from Ravan: {str(e)}")
 
 @router.get("/campaigns/{campaign_id}/contacts")
-async def get_campaign_contacts(campaign_id: str, limit: int = 500, offset: int = 0):
+async def get_campaign_contacts(
+    campaign_id: str,
+    limit: int = 500,
+    offset: int = 0,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
     api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
     if not api_key:
         raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
+
+    if current_user.role != 'admin':
+        assigned = db.exec(select(Assign_Campaigns.campaign_id).where(Assign_Campaigns.user_id == current_user.id)).all()
+        allowed_ids = set(assigned)
+        if current_user.ravan_campaign_id:
+            allowed_ids.add(current_user.ravan_campaign_id)
+        if campaign_id not in allowed_ids:
+            raise HTTPException(status_code=403, detail="Not authorized to access this campaign.")
 
     # Force param injection natively into URL string because Ravan drops dictionary query params
     url = f"https://api.ravan.ai/api/v1/campaigns/{campaign_id}/contacts?limit={limit}&offset={offset}"
@@ -757,25 +809,34 @@ async def get_global_contacts(
         return cached_data
         
     import asyncio
-    assigned_campaigns = []
     
+    db_assigned = []
+    if current_user.role != 'admin':
+        from sqlmodel import select
+        from app.models.domain import Assign_Campaigns
+        records = db.exec(select(Assign_Campaigns.campaign_id).where(Assign_Campaigns.user_id == current_user.id)).all()
+        if records:
+            db_assigned = list(set(records))
+        if current_user.ravan_campaign_id:
+            db_assigned.append(current_user.ravan_campaign_id)
+        db_assigned = list(set(filter(None, db_assigned)))
+
+    assigned_campaigns = []
     if current_user.role == 'admin':
         from dotenv import load_dotenv
         load_dotenv(override=True)
         env_campaign_id = campaign_id or os.environ.get("CAMPAIGN_ID") or os.environ.get("CAMPAIGNS")
         if env_campaign_id:
             assigned_campaigns.append(env_campaign_id)
+        if campaign_id and campaign_id not in assigned_campaigns:
+            assigned_campaigns.append(campaign_id)
     else:
-        # Non-admins get strictly physical POSTGRESQL mapped Assigned Campaigns!
-        from sqlmodel import select
-        from app.models.domain import Assign_Campaigns
-        records = db.exec(select(Assign_Campaigns.campaign_id).where(Assign_Campaigns.user_id == current_user.id)).all()
-        if records:
-            assigned_campaigns = list(set(records))
-            
-    # Include an explicitly mapped param if explicitly provided by a valid user flow
-    if campaign_id and campaign_id not in assigned_campaigns:
-        assigned_campaigns.append(campaign_id)
+        assigned_campaigns = db_assigned
+        if campaign_id:
+            if campaign_id in assigned_campaigns:
+                assigned_campaigns = [campaign_id]
+            else:
+                return {"success": True, "data": []}
 
     if not assigned_campaigns:
         return {"success": True, "data": []}
@@ -833,10 +894,28 @@ async def get_global_contacts(
         return payload
 
 @router.get("/contacts/{contact_id}/detail")
-async def get_contact_detail(contact_id: str, db: Session = Depends(get_session)):
+async def get_contact_detail(
+    contact_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
     api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
     if not api_key:
         raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
+
+    # Pre-calculate allowed ids for checking
+    allowed_campaign_ids = set()
+    allowed_agent_ids = set()
+    if current_user.role != 'admin':
+        assigned_c = db.exec(select(Assign_Campaigns.campaign_id).where(Assign_Campaigns.user_id == current_user.id)).all()
+        allowed_campaign_ids = set(assigned_c)
+        if current_user.ravan_campaign_id:
+            allowed_campaign_ids.add(current_user.ravan_campaign_id)
+            
+        assigned_a = db.exec(select(Assign_Agents.agent_id).where(Assign_Agents.user_id == current_user.id)).all()
+        allowed_agent_ids = set(assigned_a)
+        if current_user.ravan_agent_id:
+            allowed_agent_ids.add(current_user.ravan_agent_id)
 
     url = f"https://api.ravan.ai/api/v1/contacts/{contact_id}/detail"
     
@@ -850,6 +929,10 @@ async def get_contact_detail(contact_id: str, db: Session = Depends(get_session)
         from app.models.domain import Contact
         lc = db.exec(select(Contact).where((Contact.contact_id == contact_id) | (Contact.phone == contact_id))).first()
         if not lc: return None
+        # Verify access for local record
+        if current_user.role != 'admin':
+            if lc.campaign_id not in allowed_campaign_ids and lc.agent_id not in allowed_agent_ids:
+                return None
         return {
             "success": True, 
             "data": {
@@ -872,13 +955,21 @@ async def get_contact_detail(contact_id: str, db: Session = Depends(get_session)
         try:
             response = await client.get(url, headers=headers)
             if response.status_code == 200:
-                return response.json()
+                res_data = response.json()
+                if current_user.role != 'admin':
+                    contact_info = res_data.get("data", {}).get("contact", {})
+                    cid = contact_info.get("campaignId") or contact_info.get("campaign_id")
+                    aid = contact_info.get("agentId") or contact_info.get("agent_id")
+                    if cid not in allowed_campaign_ids and aid not in allowed_agent_ids:
+                        raise HTTPException(status_code=403, detail="Not authorized to access this contact.")
+                return res_data
             else:
                 print(f"Ravan Contact Detail Error ({response.status_code}):", response.text)
                 fb = await fetch_local_fallback()
                 if fb: return fb
                 raise HTTPException(status_code=response.status_code, detail=f"Failed to fetch contact details: {response.text}")
         except Exception as e:
+            if isinstance(e, HTTPException): raise e
             fb = await fetch_local_fallback()
             if fb: return fb
             raise HTTPException(status_code=500, detail=f"Network error fetching contact details from Ravan: {str(e)}")
@@ -1011,14 +1102,55 @@ async def bulk_delete_contacts(req: BulkDeleteModel):
         except httpx.RequestError as e:
             raise HTTPException(status_code=500, detail=f"Network error fetching contacts from Ravan: {str(e)}")
 
-@router.get("/contacts/{contact_id}/detail")
-async def get_contact_detail_credits(contact_id: str):
+@router.get("/contacts/{contact_id}/detail-credits")
+async def get_contact_detail_credits(
+    contact_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
     """
     Explicitly pull precise details natively extracting exact credits usage parameters.
     """
     api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
     if not api_key:
         raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
+
+    if current_user.role != 'admin':
+        allowed_campaign_ids = set()
+        allowed_agent_ids = set()
+        assigned_c = db.exec(select(Assign_Campaigns.campaign_id).where(Assign_Campaigns.user_id == current_user.id)).all()
+        allowed_campaign_ids = set(assigned_c)
+        if current_user.ravan_campaign_id:
+            allowed_campaign_ids.add(current_user.ravan_campaign_id)
+            
+        assigned_a = db.exec(select(Assign_Agents.agent_id).where(Assign_Agents.user_id == current_user.id)).all()
+        allowed_agent_ids = set(assigned_a)
+        if current_user.ravan_agent_id:
+            allowed_agent_ids.add(current_user.ravan_agent_id)
+
+        from app.models.domain import Contact
+        lc = db.exec(select(Contact).where((Contact.contact_id == contact_id) | (Contact.phone == contact_id))).first()
+        local_allowed = False
+        if lc:
+            if lc.campaign_id in allowed_campaign_ids or lc.agent_id in allowed_agent_ids:
+                local_allowed = True
+
+        if not local_allowed:
+            detail_url = f"https://api.ravan.ai/api/v1/contacts/{contact_id}/detail"
+            async with httpx.AsyncClient() as client:
+                try:
+                    res = await client.get(detail_url, headers={"X-Api-Key": api_key, "Accept": "application/json"})
+                    if res.status_code == 200:
+                        c_info = res.json().get("data", {}).get("contact", {})
+                        cid = c_info.get("campaignId") or c_info.get("campaign_id")
+                        aid = c_info.get("agentId") or c_info.get("agent_id")
+                        if cid not in allowed_campaign_ids and aid not in allowed_agent_ids:
+                            raise HTTPException(status_code=403, detail="Not authorized to access this contact.")
+                    else:
+                        raise HTTPException(status_code=403, detail="Not authorized to access this contact.")
+                except Exception as ex:
+                    if isinstance(ex, HTTPException): raise ex
+                    raise HTTPException(status_code=403, detail="Not authorized to access this contact.")
 
     url = f"https://api.ravan.ai/api/v1/contacts/{contact_id}/detail"
     headers = {
@@ -1048,13 +1180,56 @@ class UpdateContactRequest(BaseModel):
     metadata: Optional[dict] = None
 
 @router.patch("/contacts/{contact_id}")
-async def update_contact(contact_id: str, payload: UpdateContactRequest):
+async def update_contact(
+    contact_id: str,
+    payload: UpdateContactRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
     """
     Proxies contact mutations robustly against target outbound profiles.
     """
     api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
     if not api_key:
         raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
+
+    if current_user.role != 'admin':
+        # Verify ownership of contact
+        allowed_campaign_ids = set()
+        allowed_agent_ids = set()
+        assigned_c = db.exec(select(Assign_Campaigns.campaign_id).where(Assign_Campaigns.user_id == current_user.id)).all()
+        allowed_campaign_ids = set(assigned_c)
+        if current_user.ravan_campaign_id:
+            allowed_campaign_ids.add(current_user.ravan_campaign_id)
+            
+        assigned_a = db.exec(select(Assign_Agents.agent_id).where(Assign_Agents.user_id == current_user.id)).all()
+        allowed_agent_ids = set(assigned_a)
+        if current_user.ravan_agent_id:
+            allowed_agent_ids.add(current_user.ravan_agent_id)
+
+        from app.models.domain import Contact
+        lc = db.exec(select(Contact).where((Contact.contact_id == contact_id) | (Contact.phone == contact_id))).first()
+        local_allowed = False
+        if lc:
+            if lc.campaign_id in allowed_campaign_ids or lc.agent_id in allowed_agent_ids:
+                local_allowed = True
+
+        if not local_allowed:
+            detail_url = f"https://api.ravan.ai/api/v1/contacts/{contact_id}/detail"
+            async with httpx.AsyncClient() as client:
+                try:
+                    res = await client.get(detail_url, headers={"X-Api-Key": api_key, "Accept": "application/json"})
+                    if res.status_code == 200:
+                        c_info = res.json().get("data", {}).get("contact", {})
+                        cid = c_info.get("campaignId") or c_info.get("campaign_id")
+                        aid = c_info.get("agentId") or c_info.get("agent_id")
+                        if cid not in allowed_campaign_ids and aid not in allowed_agent_ids:
+                            raise HTTPException(status_code=403, detail="Not authorized to modify this contact.")
+                    else:
+                        raise HTTPException(status_code=403, detail="Not authorized to modify this contact.")
+                except Exception as ex:
+                    if isinstance(ex, HTTPException): raise ex
+                    raise HTTPException(status_code=403, detail="Not authorized to modify this contact.")
 
     url = f"https://api.ravan.ai/api/v1/contacts/{contact_id}"
     
@@ -1080,13 +1255,55 @@ async def update_contact(contact_id: str, payload: UpdateContactRequest):
             raise HTTPException(status_code=500, detail=f"Network error updating contact: {str(e)}")
 
 @router.delete("/contacts/{contact_id}")
-async def delete_contact(contact_id: str):
+async def delete_contact(
+    contact_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
     """
     Physically maps a native explicit contact deletion against Ravan AI.
     """
     api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
     if not api_key:
         raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
+
+    if current_user.role != 'admin':
+        # Verify ownership of contact
+        allowed_campaign_ids = set()
+        allowed_agent_ids = set()
+        assigned_c = db.exec(select(Assign_Campaigns.campaign_id).where(Assign_Campaigns.user_id == current_user.id)).all()
+        allowed_campaign_ids = set(assigned_c)
+        if current_user.ravan_campaign_id:
+            allowed_campaign_ids.add(current_user.ravan_campaign_id)
+            
+        assigned_a = db.exec(select(Assign_Agents.agent_id).where(Assign_Agents.user_id == current_user.id)).all()
+        allowed_agent_ids = set(assigned_a)
+        if current_user.ravan_agent_id:
+            allowed_agent_ids.add(current_user.ravan_agent_id)
+
+        from app.models.domain import Contact
+        lc = db.exec(select(Contact).where((Contact.contact_id == contact_id) | (Contact.phone == contact_id))).first()
+        local_allowed = False
+        if lc:
+            if lc.campaign_id in allowed_campaign_ids or lc.agent_id in allowed_agent_ids:
+                local_allowed = True
+
+        if not local_allowed:
+            detail_url = f"https://api.ravan.ai/api/v1/contacts/{contact_id}/detail"
+            async with httpx.AsyncClient() as client:
+                try:
+                    res = await client.get(detail_url, headers={"X-Api-Key": api_key, "Accept": "application/json"})
+                    if res.status_code == 200:
+                        c_info = res.json().get("data", {}).get("contact", {})
+                        cid = c_info.get("campaignId") or c_info.get("campaign_id")
+                        aid = c_info.get("agentId") or c_info.get("agent_id")
+                        if cid not in allowed_campaign_ids and aid not in allowed_agent_ids:
+                            raise HTTPException(status_code=403, detail="Not authorized to delete this contact.")
+                    else:
+                        raise HTTPException(status_code=403, detail="Not authorized to delete this contact.")
+                except Exception as ex:
+                    if isinstance(ex, HTTPException): raise ex
+                    raise HTTPException(status_code=403, detail="Not authorized to delete this contact.")
 
     url = f"https://api.ravan.ai/api/v1/contacts/{contact_id}"
     
@@ -1123,7 +1340,30 @@ class CreateContactModel(BaseModel):
     campaignId: Optional[str] = None
 
 @router.post("/contacts/")
-async def create_contact(req: CreateContactModel, db: Session = Depends(get_session)):
+async def create_contact(
+    req: CreateContactModel,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
+    if current_user.role != 'admin':
+        # Verify campaignId
+        if req.campaignId:
+            assigned_c = db.exec(select(Assign_Campaigns.campaign_id).where(Assign_Campaigns.user_id == current_user.id)).all()
+            allowed_c = set(assigned_c)
+            if current_user.ravan_campaign_id:
+                allowed_c.add(current_user.ravan_campaign_id)
+            if req.campaignId not in allowed_c:
+                raise HTTPException(status_code=403, detail="Not authorized for this campaign.")
+        
+        # Verify agentId
+        if req.agentId:
+            assigned_a = db.exec(select(Assign_Agents.agent_id).where(Assign_Agents.user_id == current_user.id)).all()
+            allowed_a = set(assigned_a)
+            if current_user.ravan_agent_id:
+                allowed_a.add(current_user.ravan_agent_id)
+            if req.agentId not in allowed_a:
+                raise HTTPException(status_code=403, detail="Not authorized for this agent.")
+
     api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
     if not api_key:
         raise HTTPException(status_code=500, detail="RAVAN_API_KEY is missing.")
@@ -1490,7 +1730,16 @@ async def get_dashboard_metrics_trigger(
                 metrics.append(metric)
 
         if not metrics:
-            res = {"data": None}
+            res = {
+                "data": {
+                    "total_calls": 0,
+                    "total_cost": 0.0000,
+                    "success_calls": 0,
+                    "failed_calls": 0,
+                    "total_duration_sec": 0,
+                    "success_rate": 0.0
+                }
+            }
             await set_cache(cache_key, res, ttl_seconds=30)
             return res
 
@@ -1577,6 +1826,11 @@ async def get_all_call_history(
 
     def build_local_fallback():
         q = select(CallRecord)
+        if current_user.role != 'admin':
+            if target_agent_uuids:
+                q = q.where(CallRecord.agent_id.in_(target_agent_uuids))
+            else:
+                return {"data": {"callSessions": [], "totalCount": 0}}
         if status and status.lower() not in ("all", ""):
             q = q.where(CallRecord.status == status)
         if channel and channel.lower() not in ("all", ""):
@@ -1640,8 +1894,9 @@ async def get_all_call_history(
                 filtered_sessions = []
                 for s in s_list:
                     s_agent_id = str(s.get("agentId") or s.get("agent_id") or "")
-                    if current_user.role != 'admin' and target_agent_uuids and s_agent_id not in target_agent_uuids:
-                        continue
+                    if current_user.role != 'admin':
+                        if not target_agent_uuids or s_agent_id not in target_agent_uuids:
+                            continue
 
                     if agent_id and s_agent_id != agent_id:
                         continue
@@ -1771,8 +2026,14 @@ async def list_call_sessions(
     def build_local_fallback():
         """Serve calls from local PostgreSQL CallRecord when Ravan is unavailable."""
         q = select(CallRecord)
-        if target_agent_uuids:
-            q = q.where(CallRecord.agent_id.in_(target_agent_uuids))
+        if current_user.role != 'admin':
+            if target_agent_uuids:
+                q = q.where(CallRecord.agent_id.in_(target_agent_uuids))
+            else:
+                return {"data": {"callSessions": [], "totalCount": 0}}
+        else:
+            if target_agent_uuids:
+                q = q.where(CallRecord.agent_id.in_(target_agent_uuids))
         if status and status.lower() != "all":
             q = q.where(CallRecord.status == status)
         if caller_number:
@@ -1820,9 +2081,9 @@ async def list_call_sessions(
 
                 for s in s_list:
                     # Secure Backend Sandbox Mapping -> Expose contacts strictly mapped to Agent arrays
-                    if current_user.role != 'admin' and target_agent_uuids:
+                    if current_user.role != 'admin':
                         s_agent_id = str(s.get("agentId") or s.get("agent_id") or "")
-                        if s_agent_id not in target_agent_uuids:
+                        if not target_agent_uuids or s_agent_id not in target_agent_uuids:
                             continue
                             
                     # Apply caller_number filter if set
@@ -1917,7 +2178,9 @@ async def get_phone_history(
                     agent_uuids = [current_user.ravan_agent_id] if current_user.ravan_agent_id else []
                     assigned_records = db.exec(select(Assign_Agents.agent_id).where(Assign_Agents.user_id == current_user.id)).all()
                     agent_uuids.extend(assigned_records)
-                    target_agent_uuids = set(agent_uuids)
+                    assigned_campaigns = db.exec(select(Assign_Campaigns.agent_id).where(Assign_Campaigns.user_id == current_user.id)).all()
+                    agent_uuids.extend([c for c in assigned_campaigns if c is not None])
+                    target_agent_uuids = set(filter(None, agent_uuids))
                     
                 filtered_calls = []
                 for c in calls:
@@ -2004,9 +2267,23 @@ async def get_call_audio_stream(url: str):
 
 
 @router.get("/calling/call-sessions-detail/{session_id}")
-async def get_call_session_detail(session_id: str, db: Session = Depends(get_session)):
+async def get_call_session_detail(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
     api_key = os.environ.get("RAVAN_API_KEY", settings.RAVAN_AGNI_AI)
     
+    # Pre-calculate allowed ids for checking
+    allowed_agent_ids = set()
+    if current_user.role != 'admin':
+        assigned_a = db.exec(select(Assign_Agents.agent_id).where(Assign_Agents.user_id == current_user.id)).all()
+        allowed_agent_ids = set(assigned_a)
+        if current_user.ravan_agent_id:
+            allowed_agent_ids.add(current_user.ravan_agent_id)
+        assigned_c = db.exec(select(Assign_Campaigns.agent_id).where(Assign_Campaigns.user_id == current_user.id)).all()
+        allowed_agent_ids.update([c for c in assigned_c if c is not None])
+
     def normalize_transcripts(transcripts):
         if not transcripts:
             return []
@@ -2030,6 +2307,8 @@ async def get_call_session_detail(session_id: str, db: Session = Depends(get_ses
         from sqlmodel import select
         r = db.exec(select(CallRecord).where(CallRecord.call_id == session_id)).first()
         if r:
+            if current_user.role != 'admin' and r.agent_id not in allowed_agent_ids:
+                raise HTTPException(status_code=403, detail="Not authorized to access this call session.")
             try:
                 tx = json.loads(r.transcript) if r.transcript else []
             except Exception:
@@ -2077,6 +2356,14 @@ async def get_call_session_detail(session_id: str, db: Session = Depends(get_ses
             response = await client.get(url, headers=headers)
             if response.status_code == 200:
                 res_json = response.json()
+                
+                # Check authorization for API results
+                if current_user.role != 'admin':
+                    s_data = res_json.get("data") if (isinstance(res_json, dict) and "data" in res_json) else res_json
+                    s_agent_id = str(s_data.get("agentId") or s_data.get("agent_id") or "")
+                    if s_agent_id not in allowed_agent_ids:
+                        raise HTTPException(status_code=403, detail="Not authorized to access this call session.")
+
                 if isinstance(res_json, dict):
                     if "data" in res_json and isinstance(res_json["data"], dict):
                         session_data = res_json["data"]

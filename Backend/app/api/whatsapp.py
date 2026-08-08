@@ -50,12 +50,18 @@ class CampaignCreate(BaseModel):
     delay_followup_minutes: Optional[int] = None
     media_url: Optional[str] = None
     message_type: str = "text"
+    custom_body: Optional[str] = None
 
 class SingleMessageSend(BaseModel):
     recipient_phone: str
     content_text: str
     media_url: Optional[str] = None
     message_type: str = "text" # text, image, video, audio, document
+
+class TemplateCreate(BaseModel):
+    name: str
+    content: str
+    variables: List[str]
 
 # Helper to validate phone number format (simple check)
 def validate_phone(phone: str) -> bool:
@@ -219,7 +225,9 @@ async def create_campaign(
                 for k, v in rec.get("variables", {}).items():
                     content = content.replace(f"{{{{{k}}}}}", str(v))
         else:
-            content = "Outbound campaign notification message."
+            content = payload.custom_body or "Outbound campaign notification message."
+            for k, v in rec.get("variables", {}).items():
+                content = content.replace(f"{{{{{k}}}}}", str(v))
 
         msg = WhatsAppMessage(
             campaign_id=campaign.id,
@@ -338,11 +346,11 @@ async def get_templates(response: Response, session: Session = Depends(get_sessi
     return templates
 
 @router.post("/templates")
-async def create_template(name: str, content: str, variables: List[str], session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+async def create_template(payload: TemplateCreate, session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
     tpl = WhatsAppTemplate(
-        name=name,
-        content=content,
-        variables=json.dumps(variables),
+        name=payload.name,
+        content=payload.content,
+        variables=json.dumps(payload.variables),
         approval_status="Approved",
         user_id=current_user.id
     )

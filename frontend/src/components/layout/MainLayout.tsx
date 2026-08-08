@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Phone, User, Settings, LogOut, FileText, PhoneCall, BarChart, ChevronDown, LayoutDashboard, Search, Coins, Bell, Building2, Users, Bot, History, Target, Calendar, Database, AlertOctagon, Volume2, PhoneOff, Play, Send } from 'lucide-react';
 import { apiClient } from '../../api/client';
@@ -102,27 +102,37 @@ export function MainLayout({ children }: MainLayoutProps) {
         }
     };
 
-    // Poll active SOS items periodically
+    // Keep reference of dismissedAlerts to avoid interval rebuild loops
+    const dismissedAlertsRef = useRef(dismissedAlerts);
+    useEffect(() => {
+        dismissedAlertsRef.current = dismissedAlerts;
+    }, [dismissedAlerts]);
+
+    // Poll active SOS items periodically utilizing refs to halt re-render loop issues
     useEffect(() => {
         const checkSOS = async () => {
             try {
                 const res = await apiClient.get('/todos/sos-alerts');
                 const alerts = res.data?.data || [];
-                const fresh = alerts.filter((a: any) => !dismissedAlerts[a.id]);
+                const fresh = alerts.filter((a: any) => !dismissedAlertsRef.current[a.id]);
 
-                if (fresh.length > 0) {
-                    // Check if alert count increased to play notification chime
+                setActiveAlerts(prevActive => {
+                    if (fresh.length === 0) {
+                        return prevActive.length === 0 ? prevActive : [];
+                    }
+
                     const knownFreshIds = fresh.map((f: any) => f.id);
-                    const alertsList: any[] = activeAlerts;
-                    const hasNewAlert = knownFreshIds.some((id: any) => !alertsList.some((a: any) => a.id === id));
+                    const hasNewAlert = knownFreshIds.some((id: any) => !prevActive.some((a: any) => a.id === id));
 
                     if (hasNewAlert) {
                         playEmergencyAlarm();
                     }
-                    setActiveAlerts(fresh);
-                } else {
-                    setActiveAlerts([]);
-                }
+
+                    // Strict reference check comparison to avert React layout update cascade triggers
+                    const isSame = prevActive.length === fresh.length &&
+                        prevActive.every((a, idx) => a.id === fresh[idx]?.id);
+                    return isSame ? prevActive : fresh;
+                });
             } catch (err) {
                 console.error("SOS Web Hook Alerts Poll failed:", err);
             }
@@ -131,7 +141,7 @@ export function MainLayout({ children }: MainLayoutProps) {
         checkSOS();
         const poller = setInterval(checkSOS, 5000);
         return () => clearInterval(poller);
-    }, [dismissedAlerts, activeAlerts]);
+    }, []);
 
 
     // Geometrical Aggregation Polling logic for Credits

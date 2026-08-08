@@ -113,10 +113,10 @@ export function Dashboard() {
     }, []);
 
     // Perform live structural O(n) geometric aggregations natively over Ravan data endpoints!
-    const totalCalls = dbMetrics?.total_calls || analytics?.total_calls || contacts.filter(c => c.callDurationSec > 0 || c.status === 'completed' || c.status === 'success' || c.status === 'failed').length;
+    const totalCalls = dbMetrics?.total_calls || analytics?.total_calls || contacts.filter(c => c.durationSec > 0 || c.callDurationSec > 0 || c.status === 'completed' || c.status === 'success' || c.status === 'failed').length;
 
     // Format duration from DB metrics or fallback to live sessions sum
-    const rawTotalSeconds = dbMetrics?.total_duration_sec || analytics?.total_seconds || contacts.reduce((sum, c) => sum + (c.callDurationSec || c.duration_sec || 0), 0);
+    const rawTotalSeconds = dbMetrics?.total_duration_sec || analytics?.total_seconds || contacts.reduce((sum, c) => sum + (c.durationSec || c.callDurationSec || c.duration_sec || 0), 0);
     const mm = Math.floor(rawTotalSeconds / 60);
     const ss = Math.floor(rawTotalSeconds % 60);
     const formattedDuration = rawTotalSeconds > 0 ? `${mm}m ${ss}s` : '0m 0s';
@@ -127,7 +127,7 @@ export function Dashboard() {
     const successRate = _rate;
 
     // Total credits consumed from DB or fallback to minute-based estimate from sessions
-    const totalCreditsSpent = dbMetrics?.total_cost || contacts.reduce((sum, c) => sum + Number((c.callDurationSec || c.duration_sec || 0) / 60.0), 0);
+    const totalCreditsSpent = dbMetrics?.total_cost || contacts.reduce((sum, c) => sum + (c.costTotal !== undefined ? c.costTotal * 7.0 : (c.durationSec || c.callDurationSec || c.duration_sec || 0) / 60.0 * 7.0), 0);
 
     // Live Data Generation for Graph Mapping Today
     const today = new Date().toISOString().split('T')[0];
