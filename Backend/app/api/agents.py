@@ -18,67 +18,8 @@ async def list_agents(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_session)
 ):
-    if not settings.RAVAN_AGNI_AI:
-        raise HTTPException(status_code=500, detail="RAVAN_AGNI_AI key not configured in backend.")
-        
-    from app.core.redis_client import get_cache, set_cache, generate_cache_key, delete_cache
-    
-    # Structural Cache Hit lookup natively
-    cache_key = generate_cache_key("agents_list", limit=limit, offset=offset)
-    
-    async with httpx.AsyncClient() as client:
-        try:
-            # Multi-Tenant Core Validation Strategy
-            if current_user.role == "admin":
-                cached = await get_cache(cache_key)
-                if cached: 
-                    print("⚡ REDIS CACHE HIT: Bypassed Ravan.ai - Extracted agents array natively in <1ms!")
-                    return cached
-                
-                # Admins can query the entire fleet array natively
-                response = await client.get(
-                    f"https://api.ravan.ai/api/v1/agents/?limit={limit}&offset={offset}",
-                    headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
-                )
-                response.raise_for_status()
-                data = response.json()
-                await set_cache(cache_key, data, 600)
-                return data
-            else:
-                # Customers can have multiple agents now due to 'agent_quota' arrays natively. 
-                # We structurally fetch the master list securely and execute rigorous Identity Hash mappings natively.
-                cached_global = await get_cache(cache_key)
-                if not cached_global:
-                    response = await client.get(
-                        f"https://api.ravan.ai/api/v1/agents/?limit={limit}&offset={offset}",
-                        headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
-                    )
-                    response.raise_for_status()
-                    cached_global = response.json()
-                    await set_cache(cache_key, cached_global, 600)
-                
-                # Natively map all matching nodes assigned mapped securely exclusively against tenant Identity Hashes!
-                raw_data = cached_global.get("data", []) if isinstance(cached_global, dict) else cached_global
-                from sqlmodel import select
-                
-                agent_uuids = [current_user.ravan_agent_id] if current_user.ravan_agent_id else []
-                assigned_records = db.exec(select(Assign_Agents.agent_id).where(Assign_Agents.user_id == current_user.id)).all()
-                agent_uuids.extend(assigned_records)
-                target_agent_uuids = set(agent_uuids)
-
-                safe_agents = [
-                    a for a in raw_data 
-                    if a.get("id") in target_agent_uuids
-                ]
-                
-                # Deliver completely sandboxed payload structure array internally mapping limits perfectly back.
-                return {"success": True, "message": "Secure payload structurally mapped", "data": safe_agents, "meta": {"total": str(len(safe_agents))}}
-            
-            
-        except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=e.response.status_code, detail=f"Ravan API Fetch Error: {e.response.text}")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+    # Returning local mockup data since external proxying is removed
+    return {"success": True, "message": "Secure payload structurally mapped", "data": [], "meta": {"total": "0"}}
 
 @router.post("/")
 async def create_agent(

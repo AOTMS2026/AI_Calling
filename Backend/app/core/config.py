@@ -17,9 +17,7 @@ class Settings(BaseSettings):
     N8N_WEBHOOK_URL: Optional[str] = None
     N8N_RESET_PASSWORD_URL: Optional[str] = None
     SARVAM_API: Optional[str] = None
-    RAVAN_AGNI_AI: str = ""
-    RAVAN_ORG_ID: Optional[str] = None
-    AGENT_ID: Optional[str] = None
+
     
     # Brevo SMTP Connection Details
     BREVO_SMTP_HOST: str = "smtp-relay.brevo.com"

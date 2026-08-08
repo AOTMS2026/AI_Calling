@@ -61,7 +61,7 @@ export function Calls() {
             if (filterDurationMin) params.duration_min = parseInt(filterDurationMin);
             if (filterDurationMax) params.duration_max = parseInt(filterDurationMax);
 
-            const res = await apiClient.get('/api/ravan/all-call-history', { params });
+            const res = await apiClient.get('/all-call-history', { params });
             const fetchedData = res.data?.data || res.data || {};
             let finalCalls = fetchedData?.callSessions || fetchedData?.calls || [];
 
@@ -128,7 +128,7 @@ export function Calls() {
         if (!sessionDetails[id]) {
             setDetailLoading(true);
             try {
-                const res = await apiClient.get(`/api/ravan/calling/call-sessions-detail/${id}`);
+                const res = await apiClient.get(`/calling/call-sessions-detail/${id}`);
                 setSessionDetails(prev => ({ ...prev, [id]: res.data?.data || {} }));
             } catch (err) {
                 console.error("Failed to fetch session detail", err);
@@ -476,7 +476,7 @@ export function Calls() {
                                                             {(sessionDetails[c.id]?.recording_url || c.recordingUrl) && (
                                                                 <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm flex items-center gap-4">
                                                                     <span className="text-xs font-bold text-gray-500 uppercase tracking-widest"><PhoneCall size={14} className="inline mr-1" /> Recording</span>
-                                                                    <audio controls className="h-8 max-w-md w-full ml-auto" src={(sessionDetails[c.id]?.recording_url || c.recordingUrl).includes('api.ravan.ai') ? `http://localhost:8000/api/ravan/calling/audio-stream?url=${encodeURIComponent(sessionDetails[c.id]?.recording_url || c.recordingUrl)}` : (sessionDetails[c.id]?.recording_url || c.recordingUrl)} />
+                                                                    <audio controls className="h-8 max-w-md w-full ml-auto" src={(sessionDetails[c.id]?.recording_url || c.recordingUrl).includes('api.ravan.ai') ? `http://localhost:8000/calling/audio-stream?url=${encodeURIComponent(sessionDetails[c.id]?.recording_url || c.recordingUrl)}` : (sessionDetails[c.id]?.recording_url || c.recordingUrl)} />
                                                                 </div>
                                                             )}
                                                             <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">

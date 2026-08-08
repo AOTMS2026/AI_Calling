@@ -36,7 +36,7 @@ export function InboundCampaign() {
             setAgents(agentsRes.data?.data || []);
 
             try {
-                const numbersRes = await apiClient.get('/api/ravan/phone-numbers/my');
+                const numbersRes = await apiClient.get('/phone-numbers/my');
                 const rawNumbers = numbersRes.data?.data || [];
                 if (rawNumbers && rawNumbers.length > 0) {
                     setPhoneNumbers(rawNumbers.map((n: any) => ({
@@ -57,7 +57,7 @@ export function InboundCampaign() {
                 ]);
             }
 
-            const routesRes = await apiClient.get('/api/ravan/inbound-campaigns');
+            const routesRes = await apiClient.get('/inbound-campaigns');
             setCampaigns(routesRes.data?.data || []);
         } catch (err) {
             console.error("Failed to fetch inbound data", err);
@@ -104,7 +104,7 @@ export function InboundCampaign() {
                 active_days: formData.activeDays.join(',')
             };
 
-            await apiClient.post('/api/ravan/inbound-campaigns/create', payload);
+            await apiClient.post('/inbound-campaigns/create', payload);
             toast.success("Inbound route established successfully!");
 
             // Reset slightly
@@ -126,7 +126,7 @@ export function InboundCampaign() {
         const action = currentStatus === 'Live' ? 'pause' : 'resume';
         const tid = toast.loading(`${action === 'pause' ? 'Pausing' : 'Resuming'} route...`);
         try {
-            await apiClient.post(`/api/ravan/inbound-campaigns/${id}/${action}`);
+            await apiClient.post(`/inbound-campaigns/${id}/${action}`);
             toast.success(`Route ${action}d successfully.`, { id: tid });
             refreshData();
         } catch (err) {
@@ -138,7 +138,7 @@ export function InboundCampaign() {
         if (!window.confirm("Are you sure you want to delete this routing rule?")) return;
         const tid = toast.loading("Deleting route...");
         try {
-            await apiClient.delete(`/api/ravan/inbound-campaigns/${id}`);
+            await apiClient.delete(`/inbound-campaigns/${id}`);
             toast.success("Route deleted successfully.", { id: tid });
             refreshData();
         } catch (err) {

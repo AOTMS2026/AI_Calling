@@ -226,7 +226,7 @@ export function AIAgentToolsSidebar({
     const fetchNumbers = async (country: string) => {
         setFetchingNumbers(true);
         try {
-            const response = await apiClient.get(`/api/ravan/phone-numbers/available-numbers/${country}`);
+            const response = await apiClient.get(`/phone-numbers/available-numbers/${country}`);
             setAvailableNumbers(response.data.data || []);
         } catch (e) {
             console.error(e);

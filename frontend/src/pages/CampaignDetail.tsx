@@ -38,7 +38,7 @@ export function CampaignDetail() {
         const fetchCampaignDetail = async () => {
             setLoading(true);
             try {
-                const response = await apiClient.get(`/api/ravan/campaigns/${id}`);
+                const response = await apiClient.get(`/campaigns/${id}`);
                 const data = response.data?.data;
                 setCampaign(data);
                 if (data) {
@@ -83,7 +83,7 @@ export function CampaignDetail() {
         const fetchCampaignContacts = async () => {
             setContactsLoading(true);
             try {
-                const response = await apiClient.get(`/api/ravan/campaigns/${id}/contacts`);
+                const response = await apiClient.get(`/campaigns/${id}/contacts`);
                 setContacts(response.data?.data || []);
             } catch (error) {
                 setContacts([]);
@@ -113,11 +113,11 @@ export function CampaignDetail() {
                 company: editContact.company
             };
 
-            await apiClient.patch(`/api/ravan/contacts/${editContact.contactId || editContact.id}`, payload);
+            await apiClient.patch(`/contacts/${editContact.contactId || editContact.id}`, payload);
             toast.success("Contact successfully updated!");
             setIsEditModalOpen(false);
 
-            const response = await apiClient.get(`/api/ravan/campaigns/${id}/contacts`);
+            const response = await apiClient.get(`/campaigns/${id}/contacts`);
             setContacts(response.data?.data || []);
 
         } catch (err: any) {
@@ -143,7 +143,7 @@ export function CampaignDetail() {
                     windowDays: settingsForm.windowDays
                 }
             };
-            await apiClient.patch(`/api/ravan/campaigns/${id}`, payload);
+            await apiClient.patch(`/campaigns/${id}`, payload);
             toast.success("Campaign configuration successfully saved to Ravan.ai");
             setCampaign({ ...campaign, name: settingsForm.name, schedule: { ...campaign.schedule, ...payload.schedule } });
         } catch (error: any) {

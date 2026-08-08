@@ -165,7 +165,7 @@ export function AgentBuilder() {
     const resetTestCall = () => {
         if (activeCallSessionId) {
             // Guarantee a final sync on hard reset
-            apiClient.post(`/api/ravan/calling/finalize-session/${activeCallSessionId}`).catch(() => { });
+            apiClient.post(`/calling/finalize-session/${activeCallSessionId}`).catch(() => { });
         }
         setTestCallState('idle');
         setActiveTestRoomUrl('');
@@ -182,7 +182,7 @@ export function AgentBuilder() {
         if (testCallState === 'active' && activeCallSessionId) {
             pollInterval = setInterval(async () => {
                 try {
-                    const res = await apiClient.post(`/api/ravan/calling/finalize-session/${activeCallSessionId}`);
+                    const res = await apiClient.post(`/calling/finalize-session/${activeCallSessionId}`);
                     const data = res.data?.data;
                     const status = (data?.status || '').toLowerCase();
                     // Stop polling and update UI locally when disconnect occurs naturally
@@ -205,7 +205,7 @@ export function AgentBuilder() {
 
     const handleDeleteTool = async (toolId: string) => {
         try {
-            await apiClient.delete(`/api/ravan/tools/${toolId}`);
+            await apiClient.delete(`/tools/${toolId}`);
             toast.success("Tool removed successfully");
             await fetchAgentTools();
         } catch (err) {
@@ -215,7 +215,7 @@ export function AgentBuilder() {
 
     const handleToggleTool = async (toolId: string, currentlyDisabled: boolean) => {
         try {
-            await apiClient.patch(`/api/ravan/tools/${toolId}`, { disabled: !currentlyDisabled });
+            await apiClient.patch(`/tools/${toolId}`, { disabled: !currentlyDisabled });
             toast.success(currentlyDisabled ? "Tool enabled" : "Tool disabled");
             await fetchAgentTools();
         } catch (err) {
@@ -261,7 +261,7 @@ export function AgentBuilder() {
                 timezone: timezone
             };
 
-            await apiClient.post('/api/ravan/calcom/appointments/manage', payload);
+            await apiClient.post('/calcom/appointments/manage', payload);
 
             // Store mapping locally for Admin Panel transparency capability
             await apiClient.post('/api/appointments/calcom-config', {
@@ -283,7 +283,7 @@ export function AgentBuilder() {
     const fetchAgentTools = async () => {
         if (id && id !== 'new') {
             try {
-                const res = await apiClient.get(`/api/ravan/tools?agent_id=${id}`);
+                const res = await apiClient.get(`/tools?agent_id=${id}`);
                 setAgentTools(res.data?.data || []);
             } catch (err) {
                 console.error("Failed to map tools", err);
@@ -306,9 +306,9 @@ export function AgentBuilder() {
                 definition: { execution_msg: endCallData.execution_msg }
             };
             if (editingToolId) {
-                await apiClient.patch(`/api/ravan/tools/${editingToolId}`, payload);
+                await apiClient.patch(`/tools/${editingToolId}`, payload);
             } else {
-                await apiClient.post('/api/ravan/tools', payload);
+                await apiClient.post('/tools', payload);
             }
             toast.success("Function successfully synced to Ravan.ai.");
             await fetchAgentTools();
@@ -332,9 +332,9 @@ export function AgentBuilder() {
                 definition: { pause_ms: ivrData.pause_ms }
             };
             if (editingToolId) {
-                await apiClient.patch(`/api/ravan/tools/${editingToolId}`, payload);
+                await apiClient.patch(`/tools/${editingToolId}`, payload);
             } else {
-                await apiClient.post('/api/ravan/tools', payload);
+                await apiClient.post('/tools', payload);
             }
             toast.success("Function successfully synced to Ravan.ai.");
             await fetchAgentTools();
@@ -371,9 +371,9 @@ export function AgentBuilder() {
                 }
             };
             if (editingToolId) {
-                await apiClient.patch(`/api/ravan/tools/${editingToolId}`, payload);
+                await apiClient.patch(`/tools/${editingToolId}`, payload);
             } else {
-                await apiClient.post('/api/ravan/tools', payload);
+                await apiClient.post('/tools', payload);
             }
             toast.success("Function successfully synced to Ravan.ai.");
             await fetchAgentTools();
@@ -407,7 +407,7 @@ export function AgentBuilder() {
                 callPayload.to_phone_number = testCallTo;
             }
 
-            const res = await apiClient.post('/api/ravan/calling/create-call', callPayload);
+            const res = await apiClient.post('/calling/create-call', callPayload);
             const rawPayload = res.data;
             const targetPayload = rawPayload.data || rawPayload;
 
@@ -749,7 +749,7 @@ export function AgentBuilder() {
         try {
             // Using the specific ID the user wants to test with
             const toolId = "019f8de0-7878-7be0-b159-ec80e7559a6b";
-            const response = await apiClient.get(`/api/ravan/tools/${toolId}`);
+            const response = await apiClient.get(`/tools/${toolId}`);
             setTransferToolData(response.data);
         } catch (error) {
             console.error("Failed to fetch Transfer tool:", error);

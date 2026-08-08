@@ -92,7 +92,7 @@ export function TodoList() {
             const agentsRes = await apiClient.get('/agents/');
             setAgents(agentsRes.data?.data || []);
 
-            const campaignsRes = await apiClient.get('/api/ravan/campaigns');
+            const campaignsRes = await apiClient.get('/campaigns');
             const campData = campaignsRes.data?.data || campaignsRes.data || [];
             if (Array.isArray(campData)) {
                 setCampaigns(campData);

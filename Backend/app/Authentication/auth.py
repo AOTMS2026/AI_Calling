@@ -308,26 +308,6 @@ def update_user_authorization(user_id: int, request: PatchUserRoleRequest, db: S
     
     return {"message": "User properties successfully synced securely."}
 
-@router.get("/verify-org/{org_id}")
-async def verify_org_id(org_id: str):
-    if not settings.RAVAN_AGNI_AI:
-        raise HTTPException(status_code=500, detail="RAVAN_AGNI_AI key not mapped.")
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(
-                f"https://api.ravan.ai/api/v1/organizations/profile/{org_id}",
-                headers={
-                    "X-Api-Key": settings.RAVAN_AGNI_AI,
-                    "Accept": "application/json",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-                }
-            )
-            if response.status_code == 200:
-                return {"success": True, "valid": True}
-            else:
-                return {"success": False, "detail": "Invalid Ravan Organization ID. Cannot Confirm.", "status_code": response.status_code}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to communicate with Ravan.ai: {str(e)}")
 
 @router.get("/me")
 async def get_my_profile(current_user: User = Depends(get_current_user)):

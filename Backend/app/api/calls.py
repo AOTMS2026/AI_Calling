@@ -19,42 +19,19 @@ def get_call_history(db: Session = Depends(get_session)):
 
 @router.post("/trigger")
 async def trigger_outbound_call(call_req: CallRequest, db: Session = Depends(get_session)):
-    if not settings.RAVAN_AGNI_AI or not settings.AGENT_ID:
-        raise HTTPException(status_code=500, detail="RAVAN_AGNI_AI or AGENT_ID missing from backend config.")
+    import uuid
+    # Immediately instantiate the Call Record in AOTMS Database
+    new_call = Call(
+        contact_phone=call_req.phone_number,
+        campaign_id=1,
+        vendor_call_sid=str(uuid.uuid4()),
+        result_status="Pending"
+    )
+    db.add(new_call)
+    db.commit()
+    db.refresh(new_call)
     
-    # Ravan Outbound Call Payload
-    payload = {
-        "agentId": settings.AGENT_ID,
-        "customerNumber": call_req.phone_number,
-        "metadata": {
-            "name": call_req.contact_name
-        }
-    }
-    
-    async with httpx.AsyncClient() as client:
-        try:
-            resp = await client.post(
-                "https://api.ravan.ai/api/v1/calls/",
-                json=payload,
-                headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
-            )
-            resp.raise_for_status()
-            response_data = resp.json()
-            
-            # Immediately instantiate the Call Record in AOTMS Database
-            new_call = Call(
-                contact_id=1,  # Default fallback contact id
-                campaign_id=1,
-                vendor_call_sid=response_data.get("data", {}).get("id") or response_data.get("id"),
-                status="ringing"
-            )
-            db.add(new_call)
-            db.commit()
-            
-            return {"success": True, "call_id": new_call.vendor_call_sid}
-            
-        except httpx.HTTPError as e:
-            raise HTTPException(status_code=e.response.status_code if hasattr(e, "response") else 500, detail=str(e))
+    return {"message": "Call initiated locally.", "data": new_call}
 
 @router.post("/ravan-webhook")
 async def ravan_call_webhook(request: Request, db: Session = Depends(get_session)):

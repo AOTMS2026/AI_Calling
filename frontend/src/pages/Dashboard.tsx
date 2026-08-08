@@ -36,7 +36,7 @@ export function Dashboard() {
                 ]);
 
                 // Fire Sessions sync lazily in the background to prevent UI blocking for graphs
-                apiClient.get('/api/ravan/calling/call-sessions?page_size=5000').then(sessionsRes => {
+                apiClient.get('/calling/call-sessions?page_size=5000').then(sessionsRes => {
                     let validSessions = sessionsRes.data?.data?.callSessions || sessionsRes.data?.data || [];
                     setContacts(validSessions);
                 }).catch(() => setContacts([]));
@@ -51,7 +51,7 @@ export function Dashboard() {
 
                 // Query Pre-Aggregated DB metrics — properly set into React state so UI re-renders!
                 try {
-                    const metricsRes = await apiClient.get(`/api/ravan/dashboard/metrics`);
+                    const metricsRes = await apiClient.get(`/dashboard/metrics`);
                     const m = metricsRes.data?.data;
                     if (m) {
                         setDbMetrics({
@@ -68,13 +68,13 @@ export function Dashboard() {
                 }
 
                 // Fetch actual contacts count
-                apiClient.get('/api/ravan/contacts?limit=5000').then(contactsRes => {
+                apiClient.get('/contacts?limit=5000').then(contactsRes => {
                     const contactsList = contactsRes.data?.data || [];
                     setTotalContacts(contactsList.length);
                 }).catch(() => setTotalContacts(0));
 
                 // Fetch campaigns count
-                apiClient.get('/api/ravan/campaigns?limit=500').then(campaignsRes => {
+                apiClient.get('/campaigns?limit=500').then(campaignsRes => {
                     let campaignsList = campaignsRes.data?.data || campaignsRes.data || [];
                     if (!Array.isArray(campaignsList) && typeof campaignsList === 'object') {
                         const arrays = Object.values(campaignsList).filter(v => Array.isArray(v));

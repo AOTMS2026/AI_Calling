@@ -32,7 +32,7 @@ export function ContactDetail() {
     const handleEditSave = async () => {
         setActionLoading(true);
         try {
-            await apiClient.patch(`/api/ravan/contacts/${id}`, editForm);
+            await apiClient.patch(`/contacts/${id}`, editForm);
             setEditModalOpen(false);
             window.location.reload();
         } catch (e) {
@@ -44,7 +44,7 @@ export function ContactDetail() {
     const handleTriggerCampaign = async (selectedCampId: string) => {
         setActionLoading(true);
         try {
-            await apiClient.post(`/api/ravan/campaigns/${selectedCampId}/bind-contacts`, { contactIds: [id] });
+            await apiClient.post(`/campaigns/${selectedCampId}/bind-contacts`, { contactIds: [id] });
             setCampaignModalOpen(false);
             window.location.reload();
         } catch (e) {
@@ -56,7 +56,7 @@ export function ContactDetail() {
     const handleCallContact = async (fromNumber: string) => {
         setActionLoading(true);
         try {
-            await apiClient.post(`/api/ravan/contacts/${id}/call`, { toNumber: contact?.phone, fromNumber });
+            await apiClient.post(`/contacts/${id}/call`, { toNumber: contact?.phone, fromNumber });
             setTimeout(() => {
                 setCallModalOpen(false);
                 window.location.reload();
@@ -71,10 +71,10 @@ export function ContactDetail() {
         const fetchData = async () => {
             try {
                 const [detailRes, actsRes, campsRes, notesRes] = await Promise.all([
-                    apiClient.get(`/api/ravan/contacts/${id}/detail`),
-                    apiClient.get(`/api/ravan/contacts/${id}/activities`),
-                    apiClient.get(`/api/ravan/contacts/${id}/campaigns`),
-                    apiClient.get(`/api/ravan/contacts/${id}/notes`)
+                    apiClient.get(`/contacts/${id}/detail`),
+                    apiClient.get(`/contacts/${id}/activities`),
+                    apiClient.get(`/contacts/${id}/campaigns`),
+                    apiClient.get(`/contacts/${id}/notes`)
                 ]);
                 setDetail(detailRes.data?.data || null);
                 setActivities(actsRes.data?.data || []);

@@ -14,7 +14,7 @@ export function PhoneNumbers() {
     const fetchNumbers = async () => {
         setLoading(true);
         try {
-            const response = await apiClient.get('/api/ravan/phone-numbers/available-numbers/IN?region=IN');
+            const response = await apiClient.get('/phone-numbers/available-numbers/IN?region=IN');
             setNumbers(response.data.data || []);
         } catch (error) {
             toast.error("Failed to fetch Indian phone numbers.");
@@ -26,7 +26,7 @@ export function PhoneNumbers() {
     const fetchMyNumbers = async () => {
         setLoadingMy(true);
         try {
-            const response = await apiClient.get('/api/ravan/phone-numbers/my');
+            const response = await apiClient.get('/phone-numbers/my');
             setMyNumbers(response.data.data || []);
         } catch (error) {
             console.error(error);
@@ -45,7 +45,7 @@ export function PhoneNumbers() {
                 per_minute_price_inbound: num.perMinutePriceInbound ?? num.per_minute_price_inbound ?? 0,
                 per_minute_price_outbound: num.perMinutePriceOutbound ?? num.per_minute_price_outbound ?? 0
             };
-            await apiClient.post('/api/ravan/phone-numbers/buy', payload);
+            await apiClient.post('/phone-numbers/buy', payload);
             toast.success(`Successfully acquired ${phone}!`);
             // Refresh list after purchasing to pull it off the available list securely
             fetchNumbers();

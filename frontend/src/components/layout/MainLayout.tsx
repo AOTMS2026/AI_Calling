@@ -154,7 +154,7 @@ export function MainLayout({ children }: MainLayoutProps) {
                 const assignedCredits = boundCustomer?.allocated_credits || 500;
 
                 // Natively source purely aggregated DB logic bypassing heavy legacy N-queries
-                const metricsRes = await apiClient.get(`/api/ravan/dashboard/metrics`);
+                const metricsRes = await apiClient.get(`/dashboard/metrics`);
                 const dbMetrics = metricsRes.data?.data;
                 const consumedCoins = dbMetrics ? dbMetrics.total_cost : 0.0;
 

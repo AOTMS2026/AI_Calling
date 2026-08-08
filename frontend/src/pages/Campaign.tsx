@@ -55,7 +55,7 @@ export function Campaign() {
                 return;
             }
 
-            const res = await apiClient.get('/api/ravan/campaigns');
+            const res = await apiClient.get('/campaigns');
             const data = res.data?.data;
             if (data && data.length > 0) {
                 setCampaigns(data);
@@ -78,7 +78,7 @@ export function Campaign() {
         e.stopPropagation();
         const tid = toast.loading("Starting campaign...");
         try {
-            await apiClient.post(`/api/ravan/campaigns/${id}/start`);
+            await apiClient.post(`/campaigns/${id}/start`);
             toast.success("Campaign triggered successfully!", { id: tid });
             fetchCampaigns(); // refresh statuses naturally 
         } catch (err) {
@@ -94,7 +94,7 @@ export function Campaign() {
         e.stopPropagation();
         const tid = toast.loading("Pausing campaign...");
         try {
-            await apiClient.post(`/api/ravan/campaigns/${id}/pause`);
+            await apiClient.post(`/campaigns/${id}/pause`);
             toast.success("Campaign paused successfully!", { id: tid });
             fetchCampaigns(); // sync new status 
         } catch (err) {
@@ -107,7 +107,7 @@ export function Campaign() {
         e.stopPropagation();
         const tid = toast.loading("Resuming campaign...");
         try {
-            await apiClient.post(`/api/ravan/campaigns/${id}/resume`);
+            await apiClient.post(`/campaigns/${id}/resume`);
             toast.success("Campaign resumed successfully!", { id: tid });
             fetchCampaigns();
         } catch (err) {
@@ -124,7 +124,7 @@ export function Campaign() {
 
         const tid = toast.loading("Deleting campaign...");
         try {
-            await apiClient.delete(`/api/ravan/campaigns/${id}`);
+            await apiClient.delete(`/campaigns/${id}`);
             toast.success("Campaign successfully deleted", { id: tid });
             fetchCampaigns();
         } catch (err) {
@@ -139,7 +139,7 @@ export function Campaign() {
         try {
             const [agentsRes, numbersRes] = await Promise.all([
                 apiClient.get('/agents/'),
-                apiClient.get('/api/ravan/phone-numbers/my')
+                apiClient.get('/phone-numbers/my')
             ]);
             setAvailableAgents(agentsRes.data?.data || []);
 
@@ -181,7 +181,7 @@ export function Campaign() {
                 }
             };
 
-            await apiClient.post('/api/ravan/campaigns/create', payload);
+            await apiClient.post('/campaigns/create', payload);
             toast.success(`Campaign "${formData.name}" dispatched natively!`);
             setShowModal(false);
             setFormData({ name: '', agentId: '019f85d4-0222-759d-939e-0f6b91065c94', callerId: '+918031449343' });

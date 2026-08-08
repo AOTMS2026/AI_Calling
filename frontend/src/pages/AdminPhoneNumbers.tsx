@@ -12,7 +12,7 @@ export function AdminPhoneNumbers() {
     const handleStatusChange = async (id: number, status: string) => {
         setUpdating(id);
         try {
-            await apiClient.patch(`/api/ravan/phone-numbers/${id}/status`, { status });
+            await apiClient.patch(`/phone-numbers/${id}/status`, { status });
             toast.success(`Phone number status updated to ${status}!`);
             fetchNumbers();
         } catch (error) {
@@ -25,7 +25,7 @@ export function AdminPhoneNumbers() {
     const fetchNumbers = async () => {
         setLoading(true);
         try {
-            const response = await apiClient.get('/api/ravan/phone-numbers/all');
+            const response = await apiClient.get('/phone-numbers/all');
             setNumbers(response.data.data || []);
         } catch (error) {
             toast.error("Failed to fetch purchased phone numbers.");

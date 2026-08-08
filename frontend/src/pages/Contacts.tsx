@@ -59,7 +59,7 @@ const VariableCell = ({ contact }: { contact: any }) => {
                 e.stopPropagation();
                 setLoading(true);
                 try {
-                    const res = await apiClient.get(`/api/ravan/contacts/${contact.contactId || contact.id}/detail`);
+                    const res = await apiClient.get(`/contacts/${contact.contactId || contact.id}/detail`);
                     const fetchVars = res.data?.data?.contact?.customVariables || res.data?.data?.contact?.metadata || res.data?.data?.contact?.variables || {};
                     setVars(fetchVars);
                     setFetched(true);
@@ -124,7 +124,7 @@ export function Contacts() {
 
     const fetchCampaigns = async () => {
         try {
-            const res = await apiClient.get('/api/ravan/campaigns');
+            const res = await apiClient.get('/campaigns');
             if (res.data?.data) {
                 setAvailableCampaigns(res.data.data);
                 if (res.data.data.length > 0) setCsvTargetCampaignId(res.data.data[0].id);
@@ -152,7 +152,7 @@ export function Contacts() {
             const meRes = await apiClient.get('/auth/me');
             const agentFilter = meRes.data?.role !== 'admin' ? meRes.data?.ravan_agent_id : undefined;
 
-            const res = await apiClient.get('/api/ravan/calling/phone-history', {
+            const res = await apiClient.get('/calling/phone-history', {
                 params: {
                     phone: phone,
                     page: pageNum,
@@ -191,7 +191,7 @@ export function Contacts() {
                 if (user.ravan_agent_id) queryParam += `${queryParam ? '&' : '?'}agent_id=${user.ravan_agent_id}`;
             }
 
-            const res = await apiClient.get(`/api/ravan/contacts${queryParam}`);
+            const res = await apiClient.get(`/contacts${queryParam}`);
             let fetchedContacts = res.data?.data || [];
 
 
@@ -212,7 +212,7 @@ export function Contacts() {
         if (!window.confirm("Delete this contact permanently?")) return;
         const tid = toast.loading("Deleting contact...");
         try {
-            await apiClient.delete(`/api/ravan/contacts/${id}`);
+            await apiClient.delete(`/contacts/${id}`);
             toast.success("Contact successfully eliminated from ecosystem.", { id: tid });
             fetchContacts();
         } catch (err) {
@@ -225,7 +225,7 @@ export function Contacts() {
         if (!window.confirm(`Are you absolutely sure you want to permanently destroy ${selectedContacts.length} contacts?`)) return;
         const tid = toast.loading(`Bulk terminating ${selectedContacts.length} contacts...`);
         try {
-            await apiClient.post(`/api/ravan/contacts/bulk-delete`, { ids: selectedContacts });
+            await apiClient.post(`/contacts/bulk-delete`, { ids: selectedContacts });
             toast.success(`Successfully annihilated ${selectedContacts.length} contacts via macro bulk queue!`, { id: tid });
             setSelectedContacts([]);
             fetchContacts();
@@ -250,7 +250,7 @@ export function Contacts() {
                 company: editContact.company
             };
 
-            await apiClient.patch(`/api/ravan/contacts/${editContact.contactId || editContact.id}`, payload);
+            await apiClient.patch(`/contacts/${editContact.contactId || editContact.id}`, payload);
             toast.success("Contact successfully updated!");
             setIsEditModalOpen(false);
 
@@ -308,7 +308,7 @@ export function Contacts() {
         }
 
         try {
-            const res = await apiClient.post('/api/ravan/contacts/', payload);
+            const res = await apiClient.post('/contacts/', payload);
             toast.success("Contact successfully created!");
             setIsCreateModalOpen(false);
             setCreateForm({ name: '', email: '', phone: '', company: '', tags: '', campaignId: '' });
@@ -425,7 +425,7 @@ export function Contacts() {
 
                     try {
                         if (payload.phone && payload.name) {
-                            const res = await apiClient.post('/api/ravan/contacts/', payload);
+                            const res = await apiClient.post('/contacts/', payload);
                             const createdNode = res.data?.data?.contact || res.data?.data || { ...payload, id: `temp-${Date.now()}-${Math.random()}`, status: 'pending' };
                             newlyCreated.push(createdNode);
                             successCount++;
@@ -447,7 +447,7 @@ export function Contacts() {
                     if (csvTargetCampaignId) {
                         try {
                             const cIds = newlyCreated.map(c => c.contactId || c.id).filter(Boolean);
-                            await apiClient.post(`/api/ravan/campaigns/${csvTargetCampaignId}/bind-contacts`, { contactIds: cIds });
+                            await apiClient.post(`/campaigns/${csvTargetCampaignId}/bind-contacts`, { contactIds: cIds });
                             toast.success(`Successfully mapped ${cIds.length} contacts to Target Campaign natively!`);
                         } catch (e) {
                             console.error(e);
@@ -1164,7 +1164,7 @@ export function Contacts() {
                                                         <div className="bg-gray-50 border border-gray-200 rounded-xl p-2 shadow-sm animate-in fade-in slide-in-from-top-4">
                                                             <audio
                                                                 controls
-                                                                src={`${import.meta.env.VITE_API_URL || "http://localhost:8000"}/api/ravan/calling/audio-stream?url=${encodeURIComponent(`https://api.ravan.ai/api/v1/calling/sessions/${call.id}/recording`)}`}
+                                                                src={`${import.meta.env.VITE_API_URL || "http://localhost:8000"}/calling/audio-stream?url=${encodeURIComponent(`https://api.ravan.ai/api/v1/calling/sessions/${call.id}/recording`)}`}
                                                                 className="w-full h-10 outline-none"
                                                                 preload="metadata"
                                                             />

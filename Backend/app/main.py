@@ -1,7 +1,7 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from app.database.connection import init_db
-from app.api import contacts, campaigns, calls, prompts, agents, organizations, ravan, appointments, todos, whatsapp
+from app.api import contacts, campaigns, calls, prompts, agents, organizations, appointments, todos, whatsapp
 from app.Authentication import auth
 import asyncio
 
@@ -51,7 +51,7 @@ app.include_router(calls.router)
 app.include_router(prompts.router)
 app.include_router(agents.router)
 app.include_router(organizations.router)
-app.include_router(ravan.router)
+
 app.include_router(appointments.router)
 app.include_router(todos.router)
 app.include_router(whatsapp.router)

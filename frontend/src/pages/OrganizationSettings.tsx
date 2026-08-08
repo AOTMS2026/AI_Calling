@@ -16,7 +16,7 @@ export function OrganizationSettings() {
                 setLoading(true);
                 setError(null);
 
-                const response = await apiClient.get('/api/ravan/organization');
+                const response = await apiClient.get('/organization');
                 setData(response.data);
             } catch (err: any) {
                 console.error("Failed to fetch organization Profile:", err);
