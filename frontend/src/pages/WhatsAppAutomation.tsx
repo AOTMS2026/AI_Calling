@@ -93,9 +93,9 @@ export default function WhatsAppAutomation() {
         contacts.forEach(c => {
             if (c.tags) {
                 if (Array.isArray(c.tags)) {
-                    c.tags.forEach(t => tagsSet.add(t));
+                    c.tags.forEach((t: any) => tagsSet.add(String(t)));
                 } else if (typeof c.tags === 'string') {
-                    c.tags.split(',').map(t => t.trim()).filter(Boolean).forEach(t => tagsSet.add(t));
+                    c.tags.split(',').map((t: string) => t.trim()).filter(Boolean).forEach((t: string) => tagsSet.add(t));
                 }
             }
         });
@@ -111,10 +111,10 @@ export default function WhatsAppAutomation() {
 
             if (selectedFilterTags.length === 0) return matchesSearch;
 
-            const contactTags = Array.isArray(c.tags)
+            const contactTags: string[] = Array.isArray(c.tags)
                 ? c.tags
                 : typeof c.tags === 'string'
-                    ? c.tags.split(',').map(t => t.trim()).filter(Boolean)
+                    ? c.tags.split(',').map((t: string) => t.trim()).filter(Boolean)
                     : [];
 
             const hasMatchingTag = selectedFilterTags.some(t => contactTags.includes(t));
@@ -1104,10 +1104,10 @@ Team AOTMS`
                                         const identifier = c.id || c.phone;
                                         const isChecked = selectedRecipients.includes(identifier);
                                         const displayName = c.name || `${c.first_name || ''} ${c.last_name || ''}`.trim() || 'Lead';
-                                        const contactTags = Array.isArray(c.tags)
+                                        const contactTags: string[] = Array.isArray(c.tags)
                                             ? c.tags
                                             : typeof c.tags === 'string'
-                                                ? c.tags.split(',').map(tag => tag.trim()).filter(Boolean)
+                                                ? c.tags.split(',').map((tag: string) => tag.trim()).filter(Boolean)
                                                 : [];
 
                                         return (
@@ -1134,7 +1134,7 @@ Team AOTMS`
                                                     </div>
                                                 </label>
                                                 <div className="flex gap-1 flex-wrap justify-end shrink-0 max-w-[40%]">
-                                                    {contactTags.map(t => (
+                                                    {contactTags.map((t: string) => (
                                                         <span key={t} className="text-[8px] bg-slate-100 border border-slate-200 text-slate-650 font-extrabold px-1 py-0.2 rounded-full uppercase">{t}</span>
                                                     ))}
                                                 </div>
