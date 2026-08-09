@@ -248,7 +248,42 @@ def get_campaign_contacts(campaign_id: str, current_user: User = Depends(get_cur
             "summary": call.summary
         })
         
+        
     return {"success": True, "data": results}
+
+@router.patch("/{campaign_id}")
+async def update_campaign_settings(campaign_id: str, request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_session)):
+    campaign = db.exec(select(Campaign).where(Campaign.id == campaign_id, Campaign.user_id == current_user.id)).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+        
+    payload = await request.json()
+    
+    # Update local DB if name changed
+    if "name" in payload:
+        campaign.name = payload["name"]
+        db.add(campaign)
+        db.commit()
+        db.refresh(campaign)
+
+    # Sync with Ravan.ai
+    if settings.RAVAN_AGNI_AI:
+        try:
+            url = f"https://api.ravan.ai/api/v1/campaigns/{campaign_id}"
+            headers = {
+                "X-Api-Key": settings.RAVAN_AGNI_AI,
+                "Accept": "application/json",
+                "Content-Type": "application/json"
+            }
+            async with httpx.AsyncClient() as client:
+                resp = await client.patch(url, json=payload, headers=headers)
+                if resp.status_code not in (200, 204):
+                    print(f"Ravan API Patch Failed: {resp.status_code} {resp.text}")
+                    # If ravan fails, we still return success to keep local DB in sync, or we could raise
+        except Exception as e:
+            print(f"Error updating campaign in Ravan.ai: {e}")
+
+    return {"success": True, "message": "Campaign settings updated successfully"}
 
 @router.delete("/{campaign_id}")
 async def delete_campaign(campaign_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_session)):
