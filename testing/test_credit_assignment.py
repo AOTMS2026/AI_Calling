@@ -36,21 +36,27 @@ def test_credit_assignment():
         print(f"DB Error: {e}")
         return
 
-    # 2. Update credits to 500
+    # 2. Update credits based on admin input
     print(f"\n--- Emulating Admin Panel Update for User ID {user_id} ---")
     try:
-        cursor.execute("UPDATE \"user\" SET allocated_credits = 500 WHERE id = %s", (user_id,))
+        admin_input = input("Enter the number of credits to assign: ")
+        target_credits = float(admin_input)
+        
+        cursor.execute("UPDATE \"user\" SET allocated_credits = %s WHERE id = %s", (target_credits, user_id))
         conn.commit()
-        print(f"[DB] Update successful.")
+        print(f"[DB] Successfully updated allocated_credits to {target_credits}.")
     except Exception as e:
         print(f"DB Update Error: {e}")
         
     # 3. Emulate the cache invalidation that happens in the endpoint
     print(f"\n--- Emulating Redis Cache Invalidation ---")
+    async def invalidate_caches():
+        await delete_cache("admin_global_users")
+        await delete_cache(f"user_auth_profile_{USER_EMAIL}")
+        
     try:
-        asyncio.run(delete_cache("admin_global_users"))
-        asyncio.run(delete_cache(f"user_auth_profile_{USER_EMAIL}"))
-        print("[Redis] Cache invalidation executed via asyncio.run()")
+        asyncio.run(invalidate_caches())
+        print("[Redis] Cache invalidation executed securely via asyncio.run()")
     except Exception as e:
         print(f"[Redis] Error during cache invalidation: {e}")
 
