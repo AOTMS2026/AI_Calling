@@ -383,7 +383,7 @@ export function MainLayout({ children }: MainLayoutProps) {
                     <div className="flex items-center gap-3 sm:gap-4 ml-auto">
                         <div className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 rounded-full border border-gray-200 shadow-sm whitespace-nowrap hidden sm:flex">
                             <Coins size={14} className="text-blue-500" />
-                            <span className="text-xs font-bold text-gray-900">{loadingCredits ? '...' : (typeof liveCredits === 'number' ? liveCredits.toFixed(4) : liveCredits)} <span className="text-gray-500 font-medium">Tokens</span></span>
+                            <span className="text-xs font-bold text-gray-900"><span className="text-gray-500 font-medium mr-1">Total Tokens:</span>{loadingCredits ? '...' : (typeof liveCredits === 'number' ? Math.max(0, liveCredits).toFixed(4) : liveCredits)}</span>
                         </div>
 
                         <button className="relative p-2 text-gray-600 hover:bg-gray-100 rounded-full transition-colors flex shrink-0">

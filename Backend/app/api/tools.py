@@ -27,6 +27,24 @@ async def get_tools(agent_id: str, current_user: User = Depends(get_current_user
             # Silently return empty list if Ravan fails, so frontend doesn't crash
             return {"data": []}
 
+@router.get("/{tool_id}")
+async def get_tool(tool_id: str, current_user: User = Depends(get_current_user)):
+    if not settings.RAVAN_AGNI_AI:
+        raise HTTPException(status_code=500, detail="RAVAN_AGNI_AI key not configured.")
+        
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                f"{RAVAN_TOOLS_URL}/{tool_id}",
+                headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
+            )
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=e.response.status_code, detail=f"Ravan API Error: {e.response.text}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/")
 async def create_tool(request_data: dict, current_user: User = Depends(get_current_user)):
     if not settings.RAVAN_AGNI_AI:

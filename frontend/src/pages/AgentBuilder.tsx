@@ -127,6 +127,11 @@ export function AgentBuilder() {
     const [ringDuration, setRingDuration] = useState(32); // seconds
     const [isCallSettingsSaving, setIsCallSettingsSaving] = useState(false);
 
+    // Advanced Configuration Extensions
+    const [memoryEnabled, setMemoryEnabled] = useState(false);
+    const [emotionalEnabled, setEmotionalEnabled] = useState(false);
+    const [voiceAccent, setVoiceAccent] = useState("");
+
     // Ravan Voices Architecture
     const [llmModels, setLlmModels] = useState<any[]>([]);
     const [voiceModalOpen, setVoiceModalOpen] = useState(false);
@@ -529,6 +534,11 @@ export function AgentBuilder() {
                         if (matchedVoice) reHydratedVoiceId = matchedVoice.id;
                     });
                     setVoiceId(reHydratedVoiceId);
+                    
+                    // Advanced Settings
+                    setMemoryEnabled(data.memoryEnabled || false);
+                    setEmotionalEnabled(data.emotionalEnabled || false);
+                    setVoiceAccent(data.voiceAccent || "");
                 }
 
             } catch (error) {
@@ -577,7 +587,10 @@ export function AgentBuilder() {
                     emergencyFallback: emergencyFallbackEnabled ? emergencyFallbackNumber : "",
                     ringDurationMs: ringDuration * 1000,
                     beginMessage: welcomeMessageType === "custom" ? beginMessage : "",
-                    startSpeaker: startSpeaker
+                    startSpeaker: startSpeaker,
+                    memoryEnabled: memoryEnabled,
+                    emotionalEnabled: emotionalEnabled,
+                    voiceAccent: voiceAccent
                 });
 
                 toast.success("Agent configuration fully deployed to Ravan.ai");
@@ -606,7 +619,10 @@ export function AgentBuilder() {
                     emergencyFallback: emergencyFallbackEnabled ? emergencyFallbackNumber : "",
                     ringDurationMs: ringDuration * 1000,
                     beginMessage: welcomeMessageType === "custom" ? beginMessage : "",
-                    startSpeaker: startSpeaker
+                    startSpeaker: startSpeaker,
+                    memoryEnabled: memoryEnabled,
+                    emotionalEnabled: emotionalEnabled,
+                    voiceAccent: voiceAccent
                 });
                 toast.success("Configuration successfully synced to Ravan.ai!");
             }
@@ -865,6 +881,84 @@ export function AgentBuilder() {
                                     </div>
                                     <Settings size={14} className="text-gray-400 group-hover:text-blue-500 transition-colors" />
                                 </button>
+                            </div>
+
+                        </div>
+
+                        {/* Advanced Settings Navbar Row */}
+                        <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm px-6 py-4 flex flex-col md:flex-row items-start md:items-center gap-6 overflow-hidden">
+                            
+                            {/* Memory Dropdown */}
+                            <div className="flex items-center gap-4 w-full md:w-auto">
+                                <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest shrink-0">
+                                    Memory
+                                </label>
+                                <select
+                                    value={memoryEnabled ? "enable" : "disable"}
+                                    onChange={(e) => setMemoryEnabled(e.target.value === "enable")}
+                                    className="w-full md:w-32 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                                >
+                                    <option value="disable">Disable</option>
+                                    <option value="enable">Enable</option>
+                                </select>
+                            </div>
+
+                            <div className="hidden md:block w-px h-8 bg-gray-200"></div>
+
+                            {/* Emotional Dropdown */}
+                            <div className="flex items-center gap-4 w-full md:w-auto">
+                                <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest shrink-0">
+                                    Emotional
+                                </label>
+                                <select
+                                    value={emotionalEnabled ? "enable" : "disable"}
+                                    onChange={(e) => setEmotionalEnabled(e.target.value === "enable")}
+                                    className="w-full md:w-32 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                                >
+                                    <option value="disable">Disable</option>
+                                    <option value="enable">Enable</option>
+                                </select>
+                            </div>
+
+                            <div className="hidden md:block w-px h-8 bg-gray-200"></div>
+
+                            {/* Voice Accent Selector */}
+                            <div className="flex flex-col gap-2 w-full flex-1">
+                                <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">
+                                    Voice Accent (India)
+                                </label>
+                                <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs font-semibold text-gray-600">
+                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
+                                        <input type="radio" name="accent" value="Hindi" checked={voiceAccent === "Hindi"} onChange={(e) => setVoiceAccent(e.target.value)} /> North (Hindi)
+                                    </label>
+                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
+                                        <input type="radio" name="accent" value="Punjabi" checked={voiceAccent === "Punjabi"} onChange={(e) => setVoiceAccent(e.target.value)} /> North (Punjabi)
+                                    </label>
+                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
+                                        <input type="radio" name="accent" value="Marathi" checked={voiceAccent === "Marathi"} onChange={(e) => setVoiceAccent(e.target.value)} /> West (Marathi)
+                                    </label>
+                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
+                                        <input type="radio" name="accent" value="Bengali" checked={voiceAccent === "Bengali"} onChange={(e) => setVoiceAccent(e.target.value)} /> East (Bengali)
+                                    </label>
+                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
+                                        <input type="radio" name="accent" value="Tamil" checked={voiceAccent === "Tamil"} onChange={(e) => setVoiceAccent(e.target.value)} /> South (Tamil)
+                                    </label>
+                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
+                                        <input type="radio" name="accent" value="Telugu" checked={voiceAccent === "Telugu"} onChange={(e) => setVoiceAccent(e.target.value)} /> South (Telugu)
+                                    </label>
+                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
+                                        <input type="radio" name="accent" value="Kannada" checked={voiceAccent === "Kannada"} onChange={(e) => setVoiceAccent(e.target.value)} /> South (Kannada)
+                                    </label>
+                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
+                                        <input type="radio" name="accent" value="Malayalam" checked={voiceAccent === "Malayalam"} onChange={(e) => setVoiceAccent(e.target.value)} /> South (Malayalam)
+                                    </label>
+                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
+                                        <input type="radio" name="accent" value="Gujarati" checked={voiceAccent === "Gujarati"} onChange={(e) => setVoiceAccent(e.target.value)} /> West (Gujarati)
+                                    </label>
+                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
+                                        <input type="radio" name="accent" value="Assamese" checked={voiceAccent === "Assamese"} onChange={(e) => setVoiceAccent(e.target.value)} /> East (Assamese)
+                                    </label>
+                                </div>
                             </div>
 
                         </div>
