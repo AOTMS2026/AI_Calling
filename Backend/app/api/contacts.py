@@ -243,24 +243,24 @@ async def get_contacts(
                     # Ravan sometimes leaves name blank in campaign endpoint. Fallback to Email prefix or Local DB
                     c_name = rc.get('name')
                     if not c_name:
-                        c_first = rc.get('firstName', '')
-                        c_last = rc.get('lastName', '')
+                        c_first = rc.get('firstName') or ''
+                        c_last = rc.get('lastName') or ''
                         c_name = f"{c_first} {c_last}".strip()
                     
                     if not c_name:
-                        c_email = rc.get('email', '')
+                        c_email = rc.get('email') or ''
                         c_name = c_email.split('@')[0] if c_email else 'Unknown'
                         
                     formatted_contacts.append({
                         "contact_id": c_id,
-                        "phone": rc.get('phone', ''),
+                        "phone": rc.get('phone') or '',
                         "name": c_name,
-                        "email": rc.get('email', ''),
+                        "email": rc.get('email') or '',
                         "status": rc.get('status', 'pending'),
                         "agent_id": current_user.ravan_agent_id if current_user.role != 'admin' else agent_id,
                         "campaign_id": current_user.ravan_campaign_id if current_user.role != 'admin' else None,
-                        "tags": ", ".join(rc.get('tags', [])),
-                        "created_at": rc.get('createdAt', '')
+                        "tags": ", ".join(rc.get('tags') or []),
+                        "created_at": rc.get('createdAt') or ''
                     })
                 
                 # If we fetched globally and have an agent filter, apply it manually just in case Ravan ignores it
