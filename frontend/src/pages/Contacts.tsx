@@ -424,12 +424,12 @@ export function Contacts() {
 
                     // Implicit Bulk Sandbox Binding natively securely overriding
                     if (user && user.ravan_agent_id) {
-                        payload.agentId = user.ravan_agent_id;
+                        payload.agent_id = user.ravan_agent_id;
                     }
 
                     try {
                         if (payload.phone && payload.name) {
-                            const res = await apiClient.post('/contacts/', payload);
+                            const res = await apiClient.post('/contacts/single', payload);
                             const createdNode = res.data?.data?.contact || res.data?.data || { ...payload, id: `temp-${Date.now()}-${Math.random()}`, status: 'pending' };
                             newlyCreated.push(createdNode);
                             successCount++;
