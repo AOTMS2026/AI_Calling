@@ -42,6 +42,15 @@ def run():
         # Email Address
         page.locator('input[placeholder="alex@example.com"]').fill("jayaveer@example.com")
         
+        # Target Campaign
+        # Wait a moment for campaigns to load in the dropdown
+        time.sleep(1)
+        # Select the second option (first campaign) since first option is "-- Let Backend Auto-Map --"
+        select_locator = page.locator('form select')
+        options = select_locator.locator('option').all()
+        if len(options) > 1:
+            select_locator.select_option(options[1].get_attribute("value"))
+        
         # Notes
         page.locator('textarea[placeholder="Add any relevant context or notes..."]').fill("Jayaveer from testing branch")
         
