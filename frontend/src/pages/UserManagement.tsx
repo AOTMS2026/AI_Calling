@@ -180,16 +180,6 @@ export function UserManagement() {
                                             />
                                         </div>
 
-                                        <div className="w-full md:w-32">
-                                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5 block pl-1">Assign Credits</label>
-                                            <input
-                                                type="number"
-                                                value={u.allocated_credits !== undefined ? u.allocated_credits : ''}
-                                                onChange={(e) => updateLocalUser(u.id, "allocated_credits", e.target.value)}
-                                                placeholder="e.g. 500"
-                                                className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
-                                            />
-                                        </div>
                                     </div>
                                 </div>
 
