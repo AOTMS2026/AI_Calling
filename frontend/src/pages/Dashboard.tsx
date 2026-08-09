@@ -286,7 +286,7 @@ export function Dashboard() {
                             <div className="bg-white border border-gray-200 rounded-xl p-5 hover:border-gray-300 shadow-sm transition-colors relative group">
                                 <Clock size={16} className="text-gray-400 mb-6 inline-block" />
                                 <div>
-                                    <h3 className="text-gray-500 text-[10px] uppercase font-bold tracking-wider mb-1">Total Duration</h3>
+                                    <h3 className="text-gray-500 text-[10px] uppercase font-bold tracking-wider mb-1">Total Time</h3>
                                     <p className="text-2xl font-bold text-gray-900 flex items-center gap-2">
                                         {loading ? <Loader2 size={20} className="animate-spin text-gray-400" /> : formattedDuration}
                                     </p>
@@ -319,7 +319,7 @@ export function Dashboard() {
                             <div className="bg-white border border-gray-200 rounded-xl p-5 hover:border-gray-300 shadow-sm transition-colors relative group">
                                 <Link2 size={16} className="text-gray-400 mb-6 inline-block group-hover:text-teal-500 transition-colors" />
                                 <div>
-                                    <h3 className="text-gray-500 text-[10px] uppercase font-bold tracking-wider mb-1">Total Consumed</h3>
+                                    <h3 className="text-gray-500 text-[10px] uppercase font-bold tracking-wider mb-1">Total Tokens</h3>
                                     <p className="text-2xl font-black text-gray-900 flex items-center gap-2">
                                         {loading ? <Loader2 size={18} className="animate-spin text-gray-400" /> : <span className="text-teal-600 tracking-tight">{Number(totalCreditsSpent).toFixed(4)}</span>}
                                     </p>

@@ -60,8 +60,7 @@ export function Calls() {
             if (filterCallerNumber.trim()) params.caller_number = filterCallerNumber.trim();
             if (filterDurationMin) params.duration_min = parseInt(filterDurationMin);
             if (filterDurationMax) params.duration_max = parseInt(filterDurationMax);
-
-            const res = await apiClient.get('/all-call-history', { params });
+            const res = await apiClient.get('/calling/call-sessions', { params });
             const fetchedData = res.data?.data || res.data || {};
             let finalCalls = fetchedData?.callSessions || fetchedData?.calls || [];
 
