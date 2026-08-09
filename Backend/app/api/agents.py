@@ -127,18 +127,50 @@ async def get_available_voices():
         ]
     }
 
+@router.get("/assigned-agents/list")
+async def get_assigned_agents(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    from sqlmodel import select
+    from app.models.domain import Assign_Agents
+    try:
+        assignments = db.exec(select(Assign_Agents).order_by(Assign_Agents.created_at.desc())).all()
+        return {"data": assignments}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/{agent_id}")
 async def get_agent(
     agent_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_session)
 ):
-    from app.models.domain import Agent
+    from app.models.domain import Agent, Assign_Agents
     from sqlmodel import select
     
     agent = db.exec(select(Agent).where(Agent.id == agent_id, Agent.user_id == current_user.id)).first()
     if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+        # Check for legacy agents that were created before the Agent table was added
+        is_legacy_authorized = db.exec(select(Assign_Agents).where(Assign_Agents.agent_id == agent_id, Assign_Agents.user_id == current_user.id)).first()
+        if not is_legacy_authorized and current_user.ravan_agent_id != agent_id and current_user.role != 'admin':
+            raise HTTPException(status_code=404, detail="Agent not found")
+            
+        # Auto-provision the missing legacy Agent row locally
+        agent = Agent(
+            id=agent_id,
+            user_id=current_user.id,
+            agentName="Test Agent (Legacy)",
+            model="Agni Premium",
+            voiceId="Iris",
+            prompt="You are a helpful AI Assistant."
+        )
+        db.add(agent)
+        db.commit()
+        db.refresh(agent)
         
     return {
         "success": True,
@@ -209,21 +241,7 @@ async def delete_agent(
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/assigned-agents/list")
-async def get_assigned_agents(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_session)
-):
-    if current_user.role != 'admin':
-        raise HTTPException(status_code=403, detail="Not authorized")
-    
-    from sqlmodel import select
-    from app.models.domain import Assign_Agents
-    try:
-        assignments = db.exec(select(Assign_Agents).order_by(Assign_Agents.created_at.desc())).all()
-        return {"data": assignments}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.patch("/{agent_id}")
 async def update_agent(
@@ -232,12 +250,28 @@ async def update_agent(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_session)
 ):
-    from app.models.domain import Agent
+    from app.models.domain import Agent, Assign_Agents
     from sqlmodel import select
     
     agent = db.exec(select(Agent).where(Agent.id == agent_id, Agent.user_id == current_user.id)).first()
     if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found locally.")
+        # Check for legacy agents that were created before the Agent table was added
+        is_legacy_authorized = db.exec(select(Assign_Agents).where(Assign_Agents.agent_id == agent_id, Assign_Agents.user_id == current_user.id)).first()
+        if not is_legacy_authorized and current_user.ravan_agent_id != agent_id and current_user.role != 'admin':
+            raise HTTPException(status_code=404, detail="Agent not found locally.")
+            
+        # Auto-provision the missing legacy Agent row locally
+        agent = Agent(
+            id=agent_id,
+            user_id=current_user.id,
+            agentName="Test Agent (Legacy)",
+            model="Agni Premium",
+            voiceId="Iris",
+            prompt="You are a helpful AI Assistant."
+        )
+        db.add(agent)
+        db.commit()
+        db.refresh(agent)
         
     if not settings.RAVAN_AGNI_AI:
         raise HTTPException(status_code=500, detail="RAVAN_AGNI_AI key not configured in backend.")
