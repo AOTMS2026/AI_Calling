@@ -85,6 +85,18 @@ async def create_agent(
         db.add(current_user)
         db.commit()
         
+    from app.models.domain import Agent
+    new_agent_record = Agent(
+        id=new_agent_id,
+        user_id=current_user.id,
+        agentName=request_data.get("agentName", "Test Agent"),
+        model=request_data.get("model", "Agni Premium"),
+        voiceId=request_data.get("voiceId", "Iris"),
+        prompt=request_data.get("prompt", "You are a helpful AI Assistant."),
+        status=request_data.get("status", "ACTIVE")
+    )
+    db.add(new_agent_record)
+    
     new_assignment = Assign_Agents(
         agent_id=new_agent_id,
         user_id=current_user.id,
@@ -116,16 +128,32 @@ async def get_available_voices():
     }
 
 @router.get("/{agent_id}")
-async def get_agent(agent_id: str):
-    # Returning a mock agent payload to satisfy frontend
+async def get_agent(
+    agent_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
+    from app.models.domain import Agent
+    from sqlmodel import select
+    
+    agent = db.exec(select(Agent).where(Agent.id == agent_id, Agent.user_id == current_user.id)).first()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+        
     return {
         "success": True,
         "data": {
-            "id": agent_id,
-            "agentName": "Test Agent",
-            "prompt": "You are a helpful AI Assistant.",
-            "voiceId": "Iris",
-            "model": "Agni Premium"
+            "id": agent.id,
+            "agentName": agent.agentName,
+            "prompt": agent.prompt,
+            "voiceId": agent.voiceId,
+            "model": agent.model,
+            "functions": agent.functions,
+            "calendars": agent.calendars,
+            "welcomeMessage": agent.welcomeMessage,
+            "speechSettings": agent.speechSettings,
+            "callSettings": agent.callSettings,
+            "status": agent.status
         }
     }
 
@@ -201,14 +229,35 @@ async def get_assigned_agents(
 async def update_agent(
     agent_id: str, 
     request_data: dict,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
 ):
+    from app.models.domain import Agent
+    from sqlmodel import select
+    
+    agent = db.exec(select(Agent).where(Agent.id == agent_id, Agent.user_id == current_user.id)).first()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found locally.")
+        
     if not settings.RAVAN_AGNI_AI:
         raise HTTPException(status_code=500, detail="RAVAN_AGNI_AI key not configured in backend.")
         
     # Permanently secure Platform ID upon edits
     if "agentName" in request_data and current_user.role != 'admin':
         request_data["agentName"] = request_data["agentName"].split(" [HASH:")[0]
+
+    # Update local Database fields
+    for key, value in request_data.items():
+        if hasattr(agent, key) and value is not None:
+            # If the value is a dict or list (like functions, calendars), store it as JSON string
+            if isinstance(value, (dict, list)):
+                import json
+                setattr(agent, key, json.dumps(value))
+            else:
+                setattr(agent, key, value)
+                
+    db.add(agent)
+    db.commit()
 
     async with httpx.AsyncClient() as client:
         try:

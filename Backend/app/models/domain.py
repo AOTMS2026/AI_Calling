@@ -47,6 +47,21 @@ class Contact(SQLModel, table=True):
     agent_id: Optional[str] = Field(default=None, index=True)
     tags: Optional[str] = None
 
+class Agent(SQLModel, table=True):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    user_id: str = Field(foreign_key="user.id")
+    agentName: str
+    model: Optional[str] = None
+    voiceId: Optional[str] = None
+    prompt: Optional[str] = None
+    functions: Optional[str] = None
+    calendars: Optional[str] = None
+    welcomeMessage: Optional[str] = None
+    speechSettings: Optional[str] = None
+    callSettings: Optional[str] = None
+    status: str = Field(default="ACTIVE")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
 class Campaign(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     user_id: str = Field(foreign_key="user.id")
