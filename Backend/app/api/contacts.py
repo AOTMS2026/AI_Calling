@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, BackgroundTasks, Response
-from sqlmodel import Session, select
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, BackgroundTasks, Response, Request
+from sqlmodel import Session, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.database.connection import get_session, engine
 from app.models.domain import Contact, Call, User
@@ -229,11 +229,30 @@ def manual_dial_contact(phone: str, db: Session = Depends(get_session)):
 
 @router.post("/single")
 async def create_single_contact(
-    contact: Contact, 
+    request: Request, 
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
     """Receives JSON from the UI Modal to manually inject a single user"""
+    payload_data = await request.json()
+    
+    phone = payload_data.get("phone", "")
+    name = payload_data.get("name", "")
+    email = payload_data.get("email", "")
+    agent_id = payload_data.get("agent_id")
+    campaign_id = payload_data.get("campaign_id")
+    tags = payload_data.get("tags", [])
+    
+    tags_str = ", ".join(tags) if isinstance(tags, list) else str(tags)
+    
+    contact = Contact(
+        phone=phone,
+        name=name,
+        email=email,
+        agent_id=agent_id,
+        campaign_id=campaign_id,
+        tags=tags_str
+    )
 
     # Safe insert skipping crashes if phone number already exists
     stmt = pg_insert(Contact).values([contact.model_dump()]).on_conflict_do_nothing()
@@ -243,23 +262,40 @@ async def create_single_contact(
     # Sync with Ravan.ai contacts
     if settings.RAVAN_AGNI_AI:
         try:
-            payload = {
-                "phone": contact.phone,
-                "phoneNumber": contact.phone,
-                "name": contact.name or contact.first_name or "Unknown",
-                "email": contact.email,
-                "agentId": contact.agent_id,
-            }
-            if contact.agent_id:
-                payload["agentId"] = contact.agent_id
+            name_parts = name.strip().split() if name else ["Unknown"]
+            first_name = name_parts[0]
+            last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+            
+            ravan_metadata = payload_data.get("metadata", {})
+            if "agentId" not in ravan_metadata and agent_id:
+                ravan_metadata["agentId"] = agent_id
 
-            httpx.post(
+            ravan_payload = {
+                "first_name": first_name,
+                "last_name": last_name,
+                "email": email,
+                "phone": phone,
+                "company": payload_data.get("company", ""),
+                "metadata": ravan_metadata
+            }
+
+            resp = httpx.post(
                 "https://api.ravan.ai/api/v1/contacts/",
-                json=payload,
-                headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
+                json=ravan_payload,
+                headers={"X-Api-Key": settings.RAVAN_AGNI_AI, "Content-Type": "application/json"}
             )
+            
+            if resp.status_code in (200, 201):
+                resp_data = resp.json().get("data", {})
+                ravan_id = resp_data.get("id")
+                if ravan_id:
+                    # Update local DB with contact_id
+                    db.exec(update(Contact).where(Contact.phone == phone).values(contact_id=ravan_id))
+                    db.commit()
+            else:
+                print(f"Ravan API Create Contact Failed: {resp.status_code} {resp.text}")
         except Exception as e:
-            print(f"Error triggering Ravan Outbound call: {e}")
+            print(f"Error triggering Ravan API: {e}")
 
     await invalidate_contact_caches()
     return {"message": "Contact securely added to PostgreSQL and queued in Ravan.ai."}

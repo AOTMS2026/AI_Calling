@@ -87,7 +87,7 @@ export function Contacts() {
     const PAGE_SIZE = 50;
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [createForm, setCreateForm] = useState({
-        name: '', email: '', phone: '', company: '', tags: '', campaignId: ''
+        name: '', email: '', phone: '', notes: '', tags: ''
     });
     const [metaVars, setMetaVars] = useState<{ key: string, value: string }[]>([]);
     const [isCreating, setIsCreating] = useState(false);
@@ -279,11 +279,7 @@ export function Contacts() {
                     payload.tags = v.split(',').map((t: string) => t.trim()).filter((t) => t !== '');
                 }
             } else if (v && v.trim() !== '') {
-                if (k === 'campaignId') {
-                    payload['campaign_id'] = v.trim();
-                } else {
-                    payload[k] = v.trim();
-                }
+                payload[k] = v.trim();
             }
         });
 
@@ -315,7 +311,7 @@ export function Contacts() {
             const res = await apiClient.post('/contacts/single', payload);
             toast.success("Contact successfully created!");
             setIsCreateModalOpen(false);
-            setCreateForm({ name: '', email: '', phone: '', company: '', tags: '', campaignId: '' });
+            setCreateForm({ name: '', email: '', phone: '', notes: '', tags: '' });
             setTagSearch('');
             setMetaVars([]);
 
@@ -805,23 +801,9 @@ export function Contacts() {
                                 <input required type="email" className="w-full text-sm p-2.5 border border-gray-200 rounded-lg outline-none focus:border-teal-500 transition-colors" placeholder="alex@example.com" value={createForm.email} onChange={e => setCreateForm({ ...createForm, email: e.target.value })} />
                             </div>
                             <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-700 uppercase tracking-widest mb-1.5 flex items-center gap-1.5 justify-start"><Building2 size={12} /> Company <span className="text-red-500">*</span></label>
-                                    <input required className="w-full text-sm p-2.5 border border-gray-200 rounded-lg outline-none focus:border-teal-500 transition-colors" placeholder="Acme Corp" value={createForm.company} onChange={e => setCreateForm({ ...createForm, company: e.target.value })} />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-700 uppercase tracking-widest mb-1.5 flex items-center gap-1.5 justify-start"><Target size={12} /> Target Campaign</label>
-                                    <select
-                                        className="w-full text-sm p-2.5 border border-gray-200 rounded-lg outline-none focus:border-teal-500 transition-colors appearance-none bg-white text-gray-700 font-medium shadow-sm"
-                                        value={createForm.campaignId || ""}
-                                        onChange={(e) => setCreateForm({ ...createForm, campaignId: e.target.value })}
-                                        style={{ backgroundImage: 'url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' fill=\'none\' viewBox=\'0 0 20 20\'%3E%3Cpath stroke=\'%236b7280\' stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'1.5\' d=\'M6 8l4 4 4-4\'/%3E%3C/svg%3E")', backgroundPosition: 'right .5rem center', backgroundRepeat: 'no-repeat', backgroundSize: '1.5em 1.5em', paddingRight: '2.5rem' }}
-                                    >
-                                        <option value="">-- Let Backend Auto-Map --</option>
-                                        {availableCampaigns.filter(c => !c.name.startsWith("[HASH:")).map((c) => (
-                                            <option key={c.id} value={c.id}>{c.name}</option>
-                                        ))}
-                                    </select>
+                                <div className="col-span-2">
+                                    <label className="block text-xs font-bold text-gray-700 uppercase tracking-widest mb-1.5 flex items-center gap-1.5 justify-start">Notes</label>
+                                    <textarea className="w-full text-sm p-2.5 border border-gray-200 rounded-lg outline-none focus:border-teal-500 transition-colors min-h-[60px]" placeholder="Add any relevant context or notes..." value={createForm.notes} onChange={e => setCreateForm({ ...createForm, notes: e.target.value })} />
                                 </div>
                                 <div className="relative col-span-2 sm:col-span-1">
                                     <label className="block text-xs font-bold text-gray-700 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><Tag size={12} /> Tags</label>
