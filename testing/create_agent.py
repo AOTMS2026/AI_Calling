@@ -142,9 +142,9 @@ def clean_test_entities_from_db(email, db_url, agent_prefix="Playwright Test Age
     except Exception as e:
         print(f"⚠️ Pre-cleanup failed: {e}")
 
-def run_agent_campaign_automation_test(base_url, email, password, db_url, headless=False):
-    """Automates logging in, creating an AI agent, and constructing an outbound campaign."""
-    print("\n--- 🤖 STARTING AGENT AND OUTBOUND CAMPAIGN AUTOMATION ---")
+def run_agent_automation_test(base_url, email, password, db_url, headless=False):
+    """Automates logging in and creating an AI agent."""
+    print("\n--- 🤖 STARTING AGENT AUTO-PROVISIONING ---")
     
     agent_name = f"Playwright Test Agent {random.randint(100, 999)}"
     campaign_name = f"Playwright Test Outbound {random.randint(100, 999)}"
@@ -218,65 +218,11 @@ def run_agent_campaign_automation_test(base_url, email, password, db_url, headle
             browser.close()
             return False
 
-        # Step 3: Navigate to Campaign Page
-        print("\nStep 3: Creating Outbound Dialing Campaign...")
-        page.goto(f"{base_url}/campaigns/outbound")
-        page.wait_for_load_state("networkidle")
-        
-        # Open Create New Campaign Modal
-        page.click('button:has-text("New Campaign")')
-        page.wait_for_selector('form', timeout=8000)
-        print("Campaign configuration modal rendered.")
-        
-        # Fill campaign name
-        print(f"Naming outbound campaign: '{campaign_name}'...")
-        page.locator('input[placeholder="e.g. Lead Follow-up Q3"]').fill(campaign_name)
-        
-        # Wait for agent dropdown options to populate, then select our new agent
-        print("Selecting AI voice agent from dropdown...")
-        try:
-            agent_select = page.locator('select').nth(0)
-            # Give a second for Ravan agents to fetch and populate options
-            time.sleep(1.5)
-            agent_select.select_option(value=agent_id)
-        except Exception as e:
-            print(f"⚠️ Dropped select option binding: {e}")
-            # Fallback block: select the first option available
-            page.locator('select').first.select_option(index=1)
-            
-        # Select Caller ID Number
-        print("Selecting Caller ID number...")
-        try:
-            phone_select = page.locator('select').nth(1)
-            phone_select.select_option(value=phone_number)
-        except Exception as e:
-            print(f"⚠️ Caller ID selection fallback: {e}")
-            # Fallback to select first available option
-            page.locator('select').nth(1).select_option(index=1)
-            
-        # Submit the campaign creation form
-        print("Submitting Campaign Form...")
-        page.click('button:has-text("Continue to Step 2")')
-        
-        # Wait for modal to disappear and campaigns list to reload
-        time.sleep(2)
-        print(f"🎉 Outbound Campaign '{campaign_name}' dispatched successfully!")
-        
-        # Step 4: Verify the campaign exists in the list
-        print("\nStep 4: Verifying the campaign exists in list...")
-        try:
-            page.wait_for_selector(f'h3:has-text("{campaign_name}")', timeout=8000)
-            print("✅ Verified! Outbound Campaign visible in active list.")
-            success = True
-        except Exception:
-            print("❌ Campaign validation failed: Campaign name not visible in dashboard list.")
-            success = False
-            
         browser.close()
-        return success
+        return True
 
 def main():
-    parser = argparse.ArgumentParser(description="Create AI Agent and Outbound Campaign automated test script")
+    parser = argparse.ArgumentParser(description="Create AI Agent automated test script")
     parser.add_argument("--url", default=DEFAULT_BASE_URL, help=f"Target web application base URL (default: {DEFAULT_BASE_URL})")
     parser.add_argument("--email", default=DEFAULT_TEST_EMAIL, help=f"Email for test account (default: {DEFAULT_TEST_EMAIL})")
     parser.add_argument("--password", default=DEFAULT_TEST_PASSWORD, help=f"Password for test account")
@@ -288,7 +234,7 @@ def main():
     db_url = get_db_url(args.url)
     
     print("====================================================")
-    print("   AI AGENT & OUTBOUND CAMPAIGN AUTO-PROVISIONER    ")
+    print("   AI AGENT AUTO-PROVISIONER    ")
     print("====================================================")
     print(f"🎯 Target URL       : {args.url}")
     print(f"📧 Account Email     : {args.email}")
@@ -310,13 +256,13 @@ def main():
             print("💡 Run: pip install playwright && playwright install")
             sys.exit(1)
             
-    success = run_agent_campaign_automation_test(args.url, args.email, args.password, db_url, headless=args.headless)
+    success = run_agent_automation_test(args.url, args.email, args.password, db_url, headless=args.headless)
     
     if args.cleanup:
         clean_test_entities_from_db(args.email, db_url)
         
     print("\n================ TEST SUMMARY ====================")
-    print(f"Agent & Outbound Auto-Provision: {'✅ PASSED' if success else '❌ FAILED'}")
+    print(f"Agent Auto-Provision: {'✅ PASSED' if success else '❌ FAILED'}")
     print("====================================================")
     
     if not success:

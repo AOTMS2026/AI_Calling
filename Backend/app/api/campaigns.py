@@ -192,3 +192,93 @@ async def exotel_webhook(request: Request):
             db.commit()
             
     return {"status": "success"}
+
+@router.get("/{campaign_id}")
+def get_campaign_detail(campaign_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_session)):
+    campaign = db.exec(select(Campaign).where(Campaign.id == campaign_id, Campaign.user_id == current_user.id)).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+        
+    calls = db.exec(select(Call).where(Call.campaign_id == campaign_id)).all()
+    
+    total = len(calls)
+    contacted = sum(1 for c in calls if c.result_status in ["Answered", "Completed", "Busy", "No Answer", "Failed"])
+    successful = sum(1 for c in calls if c.result_status in ["Answered", "Completed"])
+    failed = sum(1 for c in calls if c.result_status in ["Failed"])
+    noAnswer = sum(1 for c in calls if c.result_status in ["No Answer", "Busy"])
+    pending = sum(1 for c in calls if c.result_status == "Pending")
+    inProgress = sum(1 for c in calls if c.result_status == "Calling")
+    
+    return {
+        "success": True, 
+        "data": {
+            "id": campaign.id,
+            "name": campaign.name,
+            "status": campaign.status,
+            "contactStats": {
+                "total": total,
+                "contacted": contacted,
+                "successful": successful,
+                "failed": failed,
+                "noAnswer": noAnswer,
+                "pending": pending,
+                "inProgress": inProgress
+            }
+        }
+    }
+
+@router.get("/{campaign_id}/contacts")
+def get_campaign_contacts(campaign_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_session)):
+    campaign = db.exec(select(Campaign).where(Campaign.id == campaign_id, Campaign.user_id == current_user.id)).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+        
+    calls = db.exec(select(Call).where(Call.campaign_id == campaign_id)).all()
+    # Ideally join with Contact to get names, but just returning calls works for the UI stats
+    results = []
+    for call in calls:
+        contact = db.exec(select(Contact).where(Contact.phone == call.contact_phone)).first()
+        results.append({
+            "id": call.id,
+            "name": contact.name if contact else "Unknown",
+            "phone": call.contact_phone,
+            "status": call.result_status,
+            "duration": call.duration,
+            "sentiment": call.sentiment,
+            "summary": call.summary
+        })
+        
+    return {"success": True, "data": results}
+
+@router.delete("/{campaign_id}")
+async def delete_campaign(campaign_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_session)):
+    campaign = db.exec(select(Campaign).where(Campaign.id == campaign_id, Campaign.user_id == current_user.id)).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+        
+    # Delete from Ravan.ai
+    if settings.RAVAN_AGNI_AI:
+        try:
+            url = f"https://api.ravan.ai/api/v1/campaigns/{campaign_id}"
+            headers = {
+                "X-Api-Key": settings.RAVAN_AGNI_AI,
+                "Accept": "application/json"
+            }
+            async with httpx.AsyncClient() as client:
+                resp = await client.delete(url, headers=headers)
+                if resp.status_code not in (200, 204):
+                    print(f"Ravan API Delete Failed: {resp.status_code} {resp.text}")
+        except Exception as e:
+            print(f"Error deleting campaign from Ravan.ai: {e}")
+            
+    # Delete local Call records
+    calls = db.exec(select(Call).where(Call.campaign_id == campaign_id)).all()
+    for call in calls:
+        db.delete(call)
+        
+    # Delete local Campaign record
+    db.delete(campaign)
+    db.commit()
+    
+    return {"success": True, "message": "Campaign deleted successfully"}
+
