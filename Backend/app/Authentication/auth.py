@@ -255,7 +255,7 @@ async def get_all_users(db: Session = Depends(get_session)):
     return safe_users
 
 @router.patch("/users/{user_id}")
-def update_user_authorization(user_id: int, request: PatchUserRoleRequest, db: Session = Depends(get_session)):
+async def update_user_authorization(user_id: int, request: PatchUserRoleRequest, db: Session = Depends(get_session)):
     user = db.exec(select(User).where(User.id == user_id)).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -302,9 +302,8 @@ def update_user_authorization(user_id: int, request: PatchUserRoleRequest, db: S
     db.refresh(user)
     
     from app.core.redis_client import delete_cache
-    import asyncio
-    asyncio.run(delete_cache("admin_global_users"))
-    asyncio.run(delete_cache(f"user_auth_profile_{user.email}"))
+    await delete_cache("admin_global_users")
+    await delete_cache(f"user_auth_profile_{user.email}")
     
     return {"message": "User properties successfully synced securely."}
 
