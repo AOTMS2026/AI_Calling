@@ -10,7 +10,7 @@ except ImportError:
     sys.exit(1)
 
 DEFAULT_BASE_URL = "https://www.aotms.com"
-DEFAULT_TEST_EMAIL = "ramanadhamjayaveer@gmail.com"
+DEFAULT_TEST_EMAIL = "yantirababu@gmail.com"
 DEFAULT_TEST_PASSWORD = "Jayaveer!@#1837"
 
 def run_agent_update_test(base_url, email, password, headless=False):
