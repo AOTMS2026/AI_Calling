@@ -14,11 +14,7 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     
     # External APIs (Optional fallback)
-    N8N_WEBHOOK_URL: Optional[str] = None
-    N8N_RESET_PASSWORD_URL: Optional[str] = None
-    SARVAM_API: Optional[str] = None
-
-    
+    RAVAN_AGNI_AI: Optional[str] = None    
     # Brevo SMTP Connection Details
     BREVO_SMTP_HOST: str = "smtp-relay.brevo.com"
     BREVO_SMTP_PORT: int = 587

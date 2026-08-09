@@ -42,8 +42,44 @@ async def create_agent(
     db: Session = Depends(get_session)
 ):
     import uuid
+    import httpx
+    
     new_agent_id = str(uuid.uuid4())
     
+    # Send request to Ravan.ai
+    if settings.RAVAN_AGNI_AI:
+        try:
+            async with httpx.AsyncClient() as client:
+                # Prepare payload
+                dynamic_voice = request_data.get("voiceId", "Iris")
+                dynamic_model = request_data.get("model", "Agni Premium")
+                
+                raw_payload = {
+                    "agentName": request_data.get("agentName", "Test Agent"),
+                    "status": request_data.get("status", "ACTIVE"),
+                    "model": request_data.get("model", dynamic_model),
+                    "s2sModel": request_data.get("s2sModel", dynamic_model),
+                    "voiceId": request_data.get("voiceId", dynamic_voice),
+                    "prompt": request_data.get("prompt", "You are a helpful AI Assistant.")
+                }
+                
+                payload = {k: v for k, v in raw_payload.items() if v is not None}
+                
+                response = await client.post(
+                    "https://api.ravan.ai/api/v1/agents/",
+                    json=payload,
+                    headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
+                )
+                if response.status_code == 200 or response.status_code == 201:
+                    response_json = response.json()
+                    ravan_id = response_json.get("data", {}).get("id")
+                    if ravan_id:
+                        new_agent_id = ravan_id
+        except Exception as e:
+            print(f"Error calling Ravan API: {e}")
+            # Fallback to local UUID silently so testing isn't fully blocked
+            pass
+            
     if current_user.role != 'admin' and not current_user.ravan_agent_id:
         current_user.ravan_agent_id = new_agent_id
         db.add(current_user)

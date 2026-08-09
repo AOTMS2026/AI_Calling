@@ -13,11 +13,22 @@ class CampaignCreateRequest(BaseModel):
     prompt: Optional[str] = None
     voice: Optional[str] = None
 
+from app.api.dependencies import get_current_user
+from app.models.domain import User
+import httpx
+from app.core.config import settings
+import uuid
+
+@router.get("/")
+def get_campaigns(current_user: User = Depends(get_current_user), db: Session = Depends(get_session)):
+    campaigns = db.exec(select(Campaign).where(Campaign.user_id == current_user.id)).all()
+    return {"success": True, "data": campaigns}
+
 @router.post("/create")
-def create_campaign(request: CampaignCreateRequest, db: Session = Depends(get_session)):
-    current_user_id = 1
+def create_campaign(request: CampaignCreateRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_session)):
     new_campaign = Campaign(
-        user_id=current_user_id,
+        id=str(uuid.uuid4()),
+        user_id=current_user.id,
         name=request.name,
         prompt=request.prompt,
         voice=request.voice
@@ -28,19 +39,54 @@ def create_campaign(request: CampaignCreateRequest, db: Session = Depends(get_se
     return new_campaign
 
 def run_campaign_calls(campaign_id: str):
-    """Background task to dial pending contacts. Disconnected offline mode."""
+    """Background task to dial pending contacts."""
     with Session(engine) as db:
+        campaign = db.exec(select(Campaign).where(Campaign.id == campaign_id)).first()
+        if not campaign:
+            return
+            
         called_contacts_subq = select(Call.contact_phone).where(Call.campaign_id == campaign_id)
         pending_contacts = db.exec(select(Contact).where(Contact.phone.not_in(called_contacts_subq))).all()
         
         for contact in pending_contacts:
             new_call = Call(
+                id=str(uuid.uuid4()),
                 contact_phone=contact.phone,
                 campaign_id=campaign_id,
-                result_status="Offline - Exotel Removed"
+                vendor_call_sid=str(uuid.uuid4()),
+                result_status="Pending"
             )
             db.add(new_call)
             db.commit()
+            
+            # Hit Ravan API for Outbound Dialing if configured
+            if settings.RAVAN_AGNI_AI:
+                try:
+                    user = db.exec(select(User).where(User.id == campaign.user_id)).first()
+                    agent_id = user.ravan_agent_id if user else None
+                    if agent_id:
+                        payload = {
+                            "phoneNumber": contact.phone,
+                            "agentId": agent_id,
+                            "name": contact.name
+                        }
+                        
+                        # Note: We intentionally swallow async in background sync task by using httpx.post synchronously
+                        resp = httpx.post(
+                            "https://api.ravan.ai/api/v1/outbound-calls/",
+                            json=payload,
+                            headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
+                        )
+                        if resp.status_code == 200 or resp.status_code == 201:
+                            new_call.result_status = "Calling"
+                            data = resp.json().get("data", {})
+                            if data.get("id"):
+                                new_call.vendor_call_sid = data.get("id")
+                            db.add(new_call)
+                            db.commit()
+                except Exception as e:
+                    print(f"Error triggering Ravan Outbound call: {e}")
+                    pass
 
 
 @router.post("/start/{campaign_id}")
