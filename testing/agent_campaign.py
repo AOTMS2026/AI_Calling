@@ -241,7 +241,7 @@ def run_agent_campaign_automation_test(base_url, email, password, db_url, headle
         except Exception as e:
             print(f"⚠️ Dropped select option binding: {e}")
             # Fallback block: select the first option available
-            page.locator('select').first().select_option(index=1)
+            page.locator('select').first.select_option(index=1)
             
         # Select Caller ID Number
         print("Selecting Caller ID number...")

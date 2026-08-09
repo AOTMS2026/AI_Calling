@@ -18,9 +18,23 @@ async def list_agents(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_session)
 ):
-    # Returning local mockup data since external proxying is removed
-    return {"success": True, "message": "Secure payload structurally mapped", "data": [], "meta": {"total": "0"}}
-
+    from sqlmodel import select
+    from app.models.domain import Assign_Agents
+    assigned_records = db.exec(select(Assign_Agents.agent_id).where(Assign_Agents.user_id == current_user.id)).all()
+    
+    agent_uuids = set(assigned_records)
+    if current_user.ravan_agent_id:
+        agent_uuids.add(current_user.ravan_agent_id)
+        
+    agents = []
+    for uid in agent_uuids:
+        agents.append({
+            "id": uid,
+            "agentName": "Test Agent",
+            "status": "ACTIVE"
+        })
+        
+    return {"success": True, "data": agents, "meta": {"total": str(len(agents))}}
 @router.post("/")
 async def create_agent(
     request_data: dict, 
