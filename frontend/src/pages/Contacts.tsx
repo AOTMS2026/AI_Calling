@@ -308,7 +308,7 @@ export function Contacts() {
         }
 
         try {
-            const res = await apiClient.post('/contacts/', payload);
+            const res = await apiClient.post('/contacts/single', payload);
             toast.success("Contact successfully created!");
             setIsCreateModalOpen(false);
             setCreateForm({ name: '', email: '', phone: '', company: '', tags: '', campaignId: '' });
