@@ -279,7 +279,11 @@ export function Contacts() {
                     payload.tags = v.split(',').map((t: string) => t.trim()).filter((t) => t !== '');
                 }
             } else if (v && v.trim() !== '') {
-                payload[k] = v.trim();
+                if (k === 'campaignId') {
+                    payload['campaign_id'] = v.trim();
+                } else {
+                    payload[k] = v.trim();
+                }
             }
         });
 
@@ -304,7 +308,7 @@ export function Contacts() {
 
         // Implicit Secure Native Sandbox Binding!
         if (user && user.ravan_agent_id) {
-            payload.agentId = user.ravan_agent_id;
+            payload.agent_id = user.ravan_agent_id;
         }
 
         try {
