@@ -272,14 +272,14 @@ async def get_contacts(
                     # but if it does, we can filter. Otherwise, we trust the API.
                     pass
                     
-                return formatted_contacts
+                return {"success": True, "data": formatted_contacts}
         except Exception as e:
             print(f"Failed to fetch contacts from Ravan API, falling back to local: {e}")
             pass
 
     # 2. Local Fallback (if Ravan API fails or is not configured)
     contacts = db.exec(select(Contact).order_by(Contact.phone.asc()).limit(limit)).all()
-    return contacts
+    return {"success": True, "data": contacts}
 
 @router.post("/dial-single/{phone}")
 def manual_dial_contact(phone: str, db: Session = Depends(get_session)):
