@@ -30,7 +30,14 @@ def test_credit_assignment():
             return
             
         user_id, current_credits = user_row
-        print(f"[DB] Initial allocated_credits: {current_credits}")
+        print(f"[DB] Initial allocated_credits limit: {current_credits}")
+        
+        # Check their consumed cost
+        cursor.execute("SELECT total_cost FROM dashboardmetrics WHERE agent_id = (SELECT ravan_agent_id FROM \"user\" WHERE id = %s)", (user_id,))
+        cost_row = cursor.fetchone()
+        consumed_cost = cost_row[0] if cost_row else 0.0
+        print(f"[DB] Current consumed total_cost: {consumed_cost}")
+        print(f"[Math] Remaining Credits = {current_credits} - {consumed_cost} = {current_credits - consumed_cost}")
         
     except Exception as e:
         print(f"DB Error: {e}")
