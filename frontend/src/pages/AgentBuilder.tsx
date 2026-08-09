@@ -536,8 +536,8 @@ export function AgentBuilder() {
                     setVoiceId(reHydratedVoiceId);
                     
                     // Advanced Settings
-                    setMemoryEnabled(data.memoryEnabled || false);
-                    setEmotionalEnabled(data.emotionalEnabled || false);
+                    setMemoryEnabled(data.memory || false);
+                    setEmotionalEnabled(data.emotion || false);
                     setVoiceAccent(data.voiceAccent || "");
                 }
 
@@ -588,8 +588,8 @@ export function AgentBuilder() {
                     ringDurationMs: ringDuration * 1000,
                     beginMessage: welcomeMessageType === "custom" ? beginMessage : "",
                     startSpeaker: startSpeaker,
-                    memoryEnabled: memoryEnabled,
-                    emotionalEnabled: emotionalEnabled,
+                    memory: memoryEnabled,
+                    emotion: emotionalEnabled,
                     voiceAccent: voiceAccent
                 });
 
@@ -620,8 +620,8 @@ export function AgentBuilder() {
                     ringDurationMs: ringDuration * 1000,
                     beginMessage: welcomeMessageType === "custom" ? beginMessage : "",
                     startSpeaker: startSpeaker,
-                    memoryEnabled: memoryEnabled,
-                    emotionalEnabled: emotionalEnabled,
+                    memory: memoryEnabled,
+                    emotion: emotionalEnabled,
                     voiceAccent: voiceAccent
                 });
                 toast.success("Configuration successfully synced to Ravan.ai!");
@@ -927,38 +927,17 @@ export function AgentBuilder() {
                                 <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">
                                     Voice Accent (India)
                                 </label>
-                                <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs font-semibold text-gray-600">
-                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
-                                        <input type="radio" name="accent" value="Hindi" checked={voiceAccent === "Hindi"} onChange={(e) => setVoiceAccent(e.target.value)} /> North (Hindi)
-                                    </label>
-                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
-                                        <input type="radio" name="accent" value="Punjabi" checked={voiceAccent === "Punjabi"} onChange={(e) => setVoiceAccent(e.target.value)} /> North (Punjabi)
-                                    </label>
-                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
-                                        <input type="radio" name="accent" value="Marathi" checked={voiceAccent === "Marathi"} onChange={(e) => setVoiceAccent(e.target.value)} /> West (Marathi)
-                                    </label>
-                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
-                                        <input type="radio" name="accent" value="Bengali" checked={voiceAccent === "Bengali"} onChange={(e) => setVoiceAccent(e.target.value)} /> East (Bengali)
-                                    </label>
-                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
-                                        <input type="radio" name="accent" value="Tamil" checked={voiceAccent === "Tamil"} onChange={(e) => setVoiceAccent(e.target.value)} /> South (Tamil)
-                                    </label>
-                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
-                                        <input type="radio" name="accent" value="Telugu" checked={voiceAccent === "Telugu"} onChange={(e) => setVoiceAccent(e.target.value)} /> South (Telugu)
-                                    </label>
-                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
-                                        <input type="radio" name="accent" value="Kannada" checked={voiceAccent === "Kannada"} onChange={(e) => setVoiceAccent(e.target.value)} /> South (Kannada)
-                                    </label>
-                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
-                                        <input type="radio" name="accent" value="Malayalam" checked={voiceAccent === "Malayalam"} onChange={(e) => setVoiceAccent(e.target.value)} /> South (Malayalam)
-                                    </label>
-                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
-                                        <input type="radio" name="accent" value="Gujarati" checked={voiceAccent === "Gujarati"} onChange={(e) => setVoiceAccent(e.target.value)} /> West (Gujarati)
-                                    </label>
-                                    <label className="flex items-center gap-1.5 cursor-pointer hover:text-blue-600">
-                                        <input type="radio" name="accent" value="Assamese" checked={voiceAccent === "Assamese"} onChange={(e) => setVoiceAccent(e.target.value)} /> East (Assamese)
-                                    </label>
-                                </div>
+                                <select
+                                    value={voiceAccent}
+                                    onChange={(e) => setVoiceAccent(e.target.value)}
+                                    className="w-full md:w-64 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                                >
+                                    <option value="" disabled>Select regional accents for the agent.</option>
+                                    <optgroup label="India">
+                                        <option value="Indian English">English (Indian English)</option>
+                                        <option value="Telugu">South (Telugu)</option>
+                                    </optgroup>
+                                </select>
                             </div>
 
                         </div>
