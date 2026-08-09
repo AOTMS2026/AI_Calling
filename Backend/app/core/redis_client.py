@@ -42,10 +42,12 @@ async def delete_cache(prefix: str):
     """Delete all keys matching a given prefix to immediately invalidate modified domains."""
     try:
         cursor = '0'
-        while cursor != 0 and cursor != '0':
+        while True:
             cursor, keys = await redis_client.scan(cursor=cursor, match=f"{prefix}*", count=100)
             if keys:
                 await redis_client.delete(*keys)
+            if cursor == 0 or str(cursor) == '0':
+                break
     except Exception as e:
         print(f"Redis invalidate error: {e}")
 
