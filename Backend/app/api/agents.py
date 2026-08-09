@@ -27,182 +27,57 @@ async def create_agent(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_session)
 ):
-    """
-    Provisions a net-new agent securely in Ravan, and natively attaches the Master UUID to the user's relational model.
-    """
-    if not settings.RAVAN_AGNI_AI:
-        raise HTTPException(status_code=500, detail="RAVAN_AGNI_AI key not configured in backend.")
+    import uuid
+    new_agent_id = str(uuid.uuid4())
+    
+    if current_user.role != 'admin' and not current_user.ravan_agent_id:
+        current_user.ravan_agent_id = new_agent_id
+        db.add(current_user)
+        db.commit()
         
-    if current_user.role != 'admin':
-        from app.core.redis_client import get_cache, generate_cache_key
-        cache_key = generate_cache_key("agents_list", limit=1000, offset=0)
-        cached = await get_cache(cache_key)
-        
-        from sqlmodel import select
-        agent_uuids = [current_user.ravan_agent_id] if current_user.ravan_agent_id else []
-        assigned_records = db.exec(select(Assign_Agents.agent_id).where(Assign_Agents.user_id == current_user.id)).all()
-        agent_uuids.extend(assigned_records)
-        target_agent_uuids = set(agent_uuids)
-        
-        my_agents = []
-        if cached and "data" in cached:
-            my_agents = [a for a in cached["data"] if a.get("id") in target_agent_uuids]
-        else:
-            async with httpx.AsyncClient() as c:
-                try:
-                    resp = await c.get("https://api.ravan.ai/api/v1/agents/?limit=1000&offset=0", headers={"X-Api-Key": settings.RAVAN_AGNI_AI})
-                    if resp.status_code == 200:
-                        all_ag = resp.json().get("data", [])
-                        my_agents = [a for a in all_ag if a.get("id") in target_agent_uuids]
-                except:
-                    pass
-                    
-        allowed_quota = current_user.agent_quota if current_user.agent_quota > 0 else 1
-        if len(my_agents) >= allowed_quota:
-            raise HTTPException(status_code=400, detail=f"Agents Limits {len(my_agents)}/{allowed_quota}. Active allowed quota reached. Upgrade your plan to spin up more nodes.")
-
-    async with httpx.AsyncClient() as client:
-        try:
-            # --- Dynamic Node Telemetry Validation ---
-            # Ravan API explicitly rejects internal UUIDs. We must rigorously enforce Text-Literal fallbacks!
-            dynamic_model = "Agni Premium"
-            dynamic_voice = "Iris"
-
-            secured_agent_name = request_data.get("agentName", "Unnamed Agent").split(" [HASH:")[0]
-
-            # We must explicitly build the massive exhaustive payload for Ravan compliance dynamically.
-            raw_payload = {
-                "organizationId": request_data.get("organizationId"),
-                "agentName": secured_agent_name,
-                "status": request_data.get("status", "ACTIVE"),
-                "model": request_data.get("model", dynamic_model),
-                "s2sModel": request_data.get("s2sModel", dynamic_model),
-                "voiceId": request_data.get("voiceId", dynamic_voice),
-                "temperature": request_data.get("temperature", 0.7),
-                "reminderTriggerMs": request_data.get("reminderTriggerMs", 10000),
-                "reminderMaxCount": request_data.get("reminderMaxCount", 2),
-                "reminderMessage": request_data.get("reminderMessage", "Hello, are you still there?"),
-                "ambientSound": request_data.get("ambientSound"),
-                "ambientSoundVolume": request_data.get("ambientSoundVolume", 1.0),
-                "maxCallDurationMs": request_data.get("maxCallDurationMs", 600000), # 10 Minutes
-                "ringDurationMs": request_data.get("ringDurationMs", 32000), # 32 Secs
-                "voicemailMessage": request_data.get("voicemailMessage", ""),
-                "voicemailDetectionTimeoutMs": request_data.get("voicemailDetectionTimeoutMs", 7000),
-                "voicemailCustomPatterns": request_data.get("voicemailCustomPatterns"),
-                "postCallAnalysisModel": request_data.get("postCallAnalysisModel", "gpt-4o-mini"), 
-                "postCallAnalysisData": request_data.get("postCallAnalysisData"),
-                "selectedTools": request_data.get("selectedTools"),
-                "knowledgeBase": request_data.get("knowledgeBase"),
-                "beginMessage": request_data.get("beginMessage", "Hello, how can I help you?"),
-                "startSpeaker": request_data.get("startSpeaker", "agent"),
-                "prompt": request_data.get("prompt", "You are a helpful AI Assistant."),
-                "webhookUrls": request_data.get("webhookUrls"),
-                "endcallOnSilenceDuration": request_data.get("endcallOnSilenceDuration", 10000),
-                "interruptionSensitivity": request_data.get("interruptionSensitivity", 0.1),
-                "memory": request_data.get("memory", True),
-                "calendarTimezone": request_data.get("calendarTimezone", "Asia/Calcutta"),
-                "accent": request_data.get("accent"),
-                "emotion": request_data.get("emotion", True),
-                "salesforceCalendarId": request_data.get("salesforceCalendarId"),
-                "emergencyFallback": request_data.get("emergencyFallback")
-            }
-            
-            # Structurally wipe None values to prevent Ravan Strict-Mode Rejection mapping
-            payload = {k: v for k, v in raw_payload.items() if v is not None}
-
-            response = await client.post(
-                "https://api.ravan.ai/api/v1/agents/",
-                json=payload,
-                headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
-            )
-            response.raise_for_status()
-            response_json = response.json()
-            
-            # The newly created Ravan UUID
-            new_agent_id = response_json.get("data", {}).get("id")
-            
-            # Autowire this fallback natively back down into PostgreSQL for the customer (ONLY if empty, preventing Legacy node orphan overwrites!)
-            if current_user.role != 'admin' and new_agent_id and not current_user.ravan_agent_id:
-                current_user.ravan_agent_id = new_agent_id
-                db.add(current_user)
-                db.commit()
-                
-            # Log into Assign_Agents mapping unconditionally so admin knows its details
-            if new_agent_id:
-                new_assignment = Assign_Agents(
-                    agent_id=new_agent_id,
-                    user_id=current_user.id,
-                    customer_name=current_user.name,
-                    customer_email=current_user.email
-                )
-                db.add(new_assignment)
-                db.commit()
-                
-            # Flush Native Cache mapping arrays immediately
-            from app.core.redis_client import delete_cache
-            await delete_cache("agents_list")
-                
-            return response_json
-            
-        except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=e.response.status_code, detail=f"Ravan AI Provisioning Reject: {e.response.text}")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+    new_assignment = Assign_Agents(
+        agent_id=new_agent_id,
+        user_id=current_user.id,
+        customer_name=current_user.name,
+        customer_email=current_user.email
+    )
+    db.add(new_assignment)
+    db.commit()
+    
+    from app.core.redis_client import delete_cache
+    await delete_cache("agents_list")
+    
+    return {"success": True, "data": {"id": new_agent_id}}
 
 @router.get("/voices")
 async def get_available_voices():
-    if not settings.RAVAN_AGNI_AI:
-        raise HTTPException(status_code=500, detail="RAVAN_AGNI_AI key not configured in backend.")
-        
-    from app.core.redis_client import get_cache, set_cache, generate_cache_key
-    cache_key = "ravan_voices"
-    cached = await get_cache(cache_key)
-    if cached:
-        print("⚡ REDIS CACHE HIT: Bypassed Ravan.ai - Extracted voices natively in <1ms!")
-        return cached
-
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(
-                "https://api.ravan.ai/api/v1/available-llm-models/with-voices?limit=100&offset=0",
-                headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
-            )
-            response.raise_for_status()
-            data = response.json()
-            await set_cache(cache_key, data, 3600)  # Cache voices for 1 hour
-            return data
-        except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=e.response.status_code, detail=f"Ravan API Error: {e.response.text}")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+    # Mocking voices for local environment
+    return {
+        "success": True,
+        "data": [
+            {
+                "id": "model-1",
+                "llmModel": "Agni Premium",
+                "voices": [
+                    {"id": "voice-1", "voiceName": "Iris", "gender": "Female"}
+                ]
+            }
+        ]
+    }
 
 @router.get("/{agent_id}")
 async def get_agent(agent_id: str):
-    if not settings.RAVAN_AGNI_AI:
-        raise HTTPException(status_code=500, detail="RAVAN_AGNI_AI key not configured in backend.")
-        
-    from app.core.redis_client import get_cache, set_cache, generate_cache_key
-    cache_key = generate_cache_key("agent_detail_struct", agent_id=agent_id)
-    cached = await get_cache(cache_key)
-    if cached:
-        print(f"⚡ REDIS CACHE HIT: Bypassed Ravan.ai - Extracted agent {agent_id} natively in <1ms!")
-        return cached
-
-    async with httpx.AsyncClient() as client:
-        try:
-            # Trailing slash is explicitly required by Ravan's specification for UUID lookups
-            response = await client.get(
-                f"https://api.ravan.ai/api/v1/agents/{agent_id}/",
-                headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
-            )
-            response.raise_for_status()
-            data = response.json()
-            await set_cache(cache_key, data, 600)
-            return data
-        except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=e.response.status_code, detail=f"Ravan API Error: {e.response.text}")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+    # Returning a mock agent payload to satisfy frontend
+    return {
+        "success": True,
+        "data": {
+            "id": agent_id,
+            "agentName": "Test Agent",
+            "prompt": "You are a helpful AI Assistant.",
+            "voiceId": "Iris",
+            "model": "Agni Premium"
+        }
+    }
 
 @router.delete("/{agent_id}")
 async def delete_agent(

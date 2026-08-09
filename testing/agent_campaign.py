@@ -190,7 +190,8 @@ def run_agent_campaign_automation_test(base_url, email, password, db_url, headle
         page.click('h1 + button')
         
         # Fill in the name input field
-        page.locator('input[value="Unnamed Agent"]').fill(agent_name)
+        # The input has class 'text-2xl' and 'font-black'
+        page.locator('input.text-2xl.font-black').fill(agent_name)
         page.keyboard.press("Enter")
         print(f"Agent renamed in model state to: '{agent_name}'")
         
