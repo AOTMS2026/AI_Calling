@@ -240,16 +240,21 @@ async def create_single_contact(
     db.execute(stmt)
     db.commit()
     
-    # Sync with Ravan.ai outbound calling queue
-    if contact.agent_id and settings.RAVAN_AGNI_AI:
+    # Sync with Ravan.ai contacts
+    if settings.RAVAN_AGNI_AI:
         try:
             payload = {
+                "phone": contact.phone,
                 "phoneNumber": contact.phone,
+                "name": contact.name or contact.first_name or "Unknown",
+                "email": contact.email,
                 "agentId": contact.agent_id,
-                "name": contact.name or contact.first_name or "Unknown"
             }
+            if contact.agent_id:
+                payload["agentId"] = contact.agent_id
+
             httpx.post(
-                "https://api.ravan.ai/api/v1/outbound-calls/",
+                "https://api.ravan.ai/api/v1/contacts/",
                 json=payload,
                 headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
             )
