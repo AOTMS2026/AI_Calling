@@ -292,6 +292,29 @@ async def create_single_contact(
                     # Update local DB with contact_id
                     db.exec(update(Contact).where(Contact.phone == phone).values(contact_id=ravan_id))
                     db.commit()
+                    
+                    # Auto-assign contact to the target campaign in Ravan.ai
+                    if campaign_id:
+                        camp_url = f"https://api.ravan.ai/api/v1/campaigns/{campaign_id}"
+                        camp_resp = httpx.get(
+                            camp_url,
+                            headers={"X-Api-Key": settings.RAVAN_AGNI_AI, "Accept": "application/json"}
+                        )
+                        if camp_resp.status_code == 200:
+                            camp_data = camp_resp.json().get("data", {})
+                            existing_contacts = camp_data.get("contactIds", [])
+                            if not isinstance(existing_contacts, list):
+                                existing_contacts = []
+                                
+                            if ravan_id not in existing_contacts:
+                                existing_contacts.append(ravan_id)
+                                httpx.patch(
+                                    camp_url,
+                                    json={"contactIds": existing_contacts},
+                                    headers={"X-Api-Key": settings.RAVAN_AGNI_AI, "Content-Type": "application/json"}
+                                )
+                        else:
+                            print(f"Failed to fetch Ravan campaign {campaign_id} for linking: {camp_resp.text}")
             else:
                 print(f"Ravan API Create Contact Failed: {resp.status_code} {resp.text}")
         except Exception as e:
