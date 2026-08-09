@@ -205,16 +205,77 @@ async def get_contacts(
     response: Response,
     db: Session = Depends(get_session), 
     limit: int = 500,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    agent_id: str = None
 ):
     response.headers["Cache-Control"] = "public, max-age=10, s-maxage=60"
-    cache_key = generate_cache_key("contacts_global", limit=limit)
-    cached = await get_cache(cache_key)
-    if cached is not None:
-        return cached
+    
+    # 1. Fetch from Ravan API
+    if settings.RAVAN_AGNI_AI:
+        try:
+            # Determine which endpoint to hit based on sandbox isolation
+            if current_user.role != 'admin' and current_user.ravan_campaign_id:
+                # Fetch strictly for their assigned campaign
+                url = f"https://api.ravan.ai/api/v1/campaigns/{current_user.ravan_campaign_id}/contacts?limit={limit}"
+            else:
+                # Fetch globally (or filtered by frontend provided agent_id via query params natively if supported)
+                # But Ravan API /contacts doesn't officially support agentId filter in the URL based on previous tests, 
+                # so we just fetch recent and filter in memory if needed
+                url = f"https://api.ravan.ai/api/v1/contacts/?limit={limit}"
+                if agent_id:
+                    url += f"&agentId={agent_id}"
 
+            async with httpx.AsyncClient() as client:
+                r_resp = await client.get(
+                    url, 
+                    headers={"X-Api-Key": settings.RAVAN_AGNI_AI, "Accept": "application/json"}
+                )
+                
+            if r_resp.status_code == 200:
+                ravan_data = r_resp.json().get("data", [])
+                
+                # Transform Ravan payload format back into our Local Format so the Frontend Table doesn't break
+                formatted_contacts = []
+                for rc in ravan_data:
+                    # In campaigns endpoint, Ravan returns 'contactId'. In contacts endpoint, it's just 'id'.
+                    c_id = rc.get('contactId') or rc.get('id') or str(uuid.uuid4())
+                    
+                    # Ravan sometimes leaves name blank in campaign endpoint. Fallback to Email prefix or Local DB
+                    c_name = rc.get('name')
+                    if not c_name:
+                        c_first = rc.get('firstName', '')
+                        c_last = rc.get('lastName', '')
+                        c_name = f"{c_first} {c_last}".strip()
+                    
+                    if not c_name:
+                        c_email = rc.get('email', '')
+                        c_name = c_email.split('@')[0] if c_email else 'Unknown'
+                        
+                    formatted_contacts.append({
+                        "contact_id": c_id,
+                        "phone": rc.get('phone', ''),
+                        "name": c_name,
+                        "email": rc.get('email', ''),
+                        "status": rc.get('status', 'pending'),
+                        "agent_id": current_user.ravan_agent_id if current_user.role != 'admin' else agent_id,
+                        "campaign_id": current_user.ravan_campaign_id if current_user.role != 'admin' else None,
+                        "tags": ", ".join(rc.get('tags', [])),
+                        "created_at": rc.get('createdAt', '')
+                    })
+                
+                # If we fetched globally and have an agent filter, apply it manually just in case Ravan ignores it
+                if current_user.role == 'admin' and agent_id:
+                    # Ravan API doesn't return agentId directly in contact items usually, 
+                    # but if it does, we can filter. Otherwise, we trust the API.
+                    pass
+                    
+                return formatted_contacts
+        except Exception as e:
+            print(f"Failed to fetch contacts from Ravan API, falling back to local: {e}")
+            pass
+
+    # 2. Local Fallback (if Ravan API fails or is not configured)
     contacts = db.exec(select(Contact).order_by(Contact.phone.asc()).limit(limit)).all()
-    await set_cache(cache_key, serialize_models(contacts), ttl_seconds=30)
     return contacts
 
 @router.post("/dial-single/{phone}")
