@@ -13,6 +13,8 @@ import uuid
 import json
 from typing import List, Any
 from app.core.redis_client import get_cache, set_cache, delete_cache, generate_cache_key
+from app.core.config import settings
+import httpx
 
 def serialize_models(models: List[Any]) -> List[dict]:
     serialized = []
@@ -237,5 +239,22 @@ async def create_single_contact(
     stmt = pg_insert(Contact).values([contact.model_dump()]).on_conflict_do_nothing()
     db.execute(stmt)
     db.commit()
+    
+    # Sync with Ravan.ai outbound calling queue
+    if contact.agent_id and settings.RAVAN_AGNI_AI:
+        try:
+            payload = {
+                "phoneNumber": contact.phone,
+                "agentId": contact.agent_id,
+                "name": contact.name or contact.first_name or "Unknown"
+            }
+            httpx.post(
+                "https://api.ravan.ai/api/v1/outbound-calls/",
+                json=payload,
+                headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
+            )
+        except Exception as e:
+            print(f"Error triggering Ravan Outbound call: {e}")
+
     await invalidate_contact_caches()
-    return {"message": "Contact securely added to PostgreSQL."}
+    return {"message": "Contact securely added to PostgreSQL and queued in Ravan.ai."}
