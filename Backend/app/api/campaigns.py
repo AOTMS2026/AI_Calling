@@ -8,10 +8,24 @@ from app.models.domain import Campaign, Contact, Call
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
-class CampaignCreateRequest(BaseModel):
+from typing import Optional, List
+
+class CampaignSchedule(BaseModel):
+    windowStart: Optional[str] = None
+    windowEnd: Optional[str] = None
+    windowDays: Optional[List[int]] = None
+    timezone: Optional[str] = "UTC"
+    maxConcurrent: Optional[int] = 5
+    retryAttempts: Optional[int] = 3
+    retryGapMin: Optional[int] = 15
+
+class CreateCampaignRequest(BaseModel):
     name: str
-    prompt: Optional[str] = None
-    voice: Optional[str] = None
+    agentId: str
+    phoneNumberId: str
+    fromPhoneNumber: str
+    contactIds: Optional[List[str]] = []
+    schedule: Optional[CampaignSchedule] = None
 
 from app.api.dependencies import get_current_user
 from app.models.domain import User
@@ -25,15 +39,43 @@ def get_campaigns(current_user: User = Depends(get_current_user), db: Session = 
     return {"success": True, "data": campaigns}
 
 @router.post("/create")
-def create_campaign(request: CampaignCreateRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_session)):
+async def create_campaign(request: CreateCampaignRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_session)):
+    
+    new_campaign_id = str(uuid.uuid4())
+    
+    if settings.RAVAN_AGNI_AI:
+        try:
+            url = "https://api.ravan.ai/api/v1/campaigns/"
+            headers = {
+                "X-Api-Key": settings.RAVAN_AGNI_AI,
+                "Accept": "application/json",
+                "Content-Type": "application/json"
+            }
+            body = request.model_dump(exclude_none=True)
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=body, headers=headers)
+                if response.status_code == 200 or response.status_code == 201:
+                    data = response.json().get("data", {})
+                    if data.get("id"):
+                        new_campaign_id = data.get("id")
+        except Exception as e:
+            print(f"Failed to sync campaign with Ravan API: {e}")
+            pass
+            
+    # Save to local DB
     new_campaign = Campaign(
-        id=str(uuid.uuid4()),
+        id=new_campaign_id,
         user_id=current_user.id,
-        name=request.name,
-        prompt=request.prompt,
-        voice=request.voice
+        name=request.name
     )
     db.add(new_campaign)
+    
+    # Store globally for user fallback if needed
+    if current_user.role != 'admin' and not current_user.ravan_campaign_id:
+        current_user.ravan_campaign_id = new_campaign_id
+        db.add(current_user)
+        
     db.commit()
     db.refresh(new_campaign)
     return new_campaign
