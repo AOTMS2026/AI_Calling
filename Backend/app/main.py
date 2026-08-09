@@ -1,7 +1,7 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from app.database.connection import init_db
-from app.api import contacts, campaigns, calls, prompts, agents, organizations, appointments, todos, whatsapp, dashboard, phone_numbers, tools
+from app.api import contacts, campaigns, calls, calling, prompts, agents, organizations, appointments, todos, whatsapp, dashboard, phone_numbers, tools
 from app.Authentication import auth
 import asyncio
 
@@ -58,6 +58,7 @@ app.include_router(whatsapp.router)
 app.include_router(dashboard.router)
 app.include_router(phone_numbers.router)
 app.include_router(tools.router)
+app.include_router(calling.router)
 
 @app.on_event("startup")
 def on_startup():

@@ -9,14 +9,14 @@ router = APIRouter(prefix="/tools", tags=["tools"])
 RAVAN_TOOLS_URL = "https://api.ravan.ai/api/v1/tools"
 
 @router.get("/")
-async def get_tools(agentId: str, current_user: User = Depends(get_current_user)):
+async def get_tools(agent_id: str, current_user: User = Depends(get_current_user)):
     if not settings.RAVAN_AGNI_AI:
         return {"data": []}
         
     async with httpx.AsyncClient() as client:
         try:
-            # Trailing slash might be needed by Ravan API depending on its strictness
-            url = f"{RAVAN_TOOLS_URL}/?agentId={agentId}"
+            # Ravan API usually expects camelCase parameters
+            url = f"{RAVAN_TOOLS_URL}/?agentId={agent_id}"
             response = await client.get(
                 url,
                 headers={"X-Api-Key": settings.RAVAN_AGNI_AI}

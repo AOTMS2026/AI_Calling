@@ -112,20 +112,25 @@ async def create_agent(
     return {"success": True, "data": {"id": new_agent_id}}
 
 @router.get("/voices")
-async def get_available_voices():
-    # Mocking voices for local environment
-    return {
-        "success": True,
-        "data": [
-            {
-                "id": "model-1",
-                "llmModel": "Agni Premium",
-                "voices": [
-                    {"id": "voice-1", "voiceName": "Iris", "gender": "Female"}
-                ]
-            }
-        ]
-    }
+async def get_available_voices(current_user: User = Depends(get_current_user)):
+    if not settings.RAVAN_AGNI_AI:
+        return {"success": False, "data": [], "message": "RAVAN_AGNI_AI key missing"}
+        
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                "https://api.ravan.ai/api/v1/available-llm-models/with-voices",
+                headers={"X-Api-Key": settings.RAVAN_AGNI_AI},
+                timeout=10.0
+            )
+            response.raise_for_status()
+            res_json = response.json()
+            # If the response contains a 'data' array, unwrap it; otherwise use it directly
+            remote_data = res_json.get("data", res_json) if isinstance(res_json, dict) else res_json
+            return {"success": True, "data": remote_data}
+        except Exception as e:
+            print(f"Error fetching Ravan models/voices: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/assigned-agents/list")
 async def get_assigned_agents(
