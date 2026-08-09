@@ -6,6 +6,7 @@ import random
 import string
 import argparse
 import requests
+import uuid
 from dotenv import load_dotenv
 
 # Try importing psycopg for postgres connection, fallback gracefully if not installed
@@ -97,8 +98,8 @@ def ensure_purchased_phone_number(email, db_url, phone_to_ensure="+918031449343"
                     conflict = cur.fetchone()
                     if not conflict:
                         cur.execute(
-                            'INSERT INTO purchasedphonenumber (user_id, phone_number, price, per_minute_price_inbound, per_minute_price_outbound, status, created_at) VALUES (%s, %s, %s, %s, %s, %s, NOW())',
-                            (user_id, phone_to_ensure, 295.0, 0.6, 0.6, 'Active')
+                            'INSERT INTO purchasedphonenumber (id, user_id, phone_number, price, per_minute_price_inbound, per_minute_price_outbound, status, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())',
+                            (str(uuid.uuid4()), user_id, phone_to_ensure, 295.0, 0.6, 0.6, 'Active')
                         )
                         conn.commit()
                         print(f"📦 Insured phone number '{phone_to_ensure}' is bound to user ID {user_id} in database.")
