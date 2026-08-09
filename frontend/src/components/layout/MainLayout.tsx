@@ -156,7 +156,21 @@ export function MainLayout({ children }: MainLayoutProps) {
                 // Natively source purely aggregated DB logic bypassing heavy legacy N-queries
                 const metricsRes = await apiClient.get(`/dashboard/metrics`);
                 const dbMetrics = metricsRes.data?.data;
-                const consumedCoins = dbMetrics ? dbMetrics.total_cost : 0.0;
+                let consumedCoins = dbMetrics ? dbMetrics.total_cost : 0.0;
+
+                // Fallback to live call-sessions if dbMetrics is 0, matching Dashboard UI logic
+                if (consumedCoins === 0) {
+                    try {
+                        const sessionsRes = await apiClient.get('/calling/call-sessions?page_size=5000');
+                        const sessions = sessionsRes.data?.data?.callSessions || sessionsRes.data?.data || [];
+                        consumedCoins = sessions.reduce((sum: number, c: any) => {
+                            const cost = c.costTotal !== undefined ? c.costTotal * 7.0 : (c.durationSec || c.callDurationSec || c.duration_sec || 0) / 60.0 * 7.0;
+                            return sum + cost;
+                        }, 0);
+                    } catch (err) {
+                        console.error("Layout global sessions sync failed", err);
+                    }
+                }
 
                 const remainingCredits = Math.max(0, assignedCredits - consumedCoins);
 

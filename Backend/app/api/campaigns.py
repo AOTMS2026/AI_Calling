@@ -34,9 +34,35 @@ from app.core.config import settings
 import uuid
 
 @router.get("/")
-def get_campaigns(current_user: User = Depends(get_current_user), db: Session = Depends(get_session)):
+async def get_campaigns(current_user: User = Depends(get_current_user), db: Session = Depends(get_session)):
     campaigns = db.exec(select(Campaign).where(Campaign.user_id == current_user.id)).all()
-    return {"success": True, "data": campaigns}
+    
+    # 1. Convert to dictionary
+    campaign_dict_map = {c.id: c.model_dump() for c in campaigns}
+    
+    # 2. Fetch live stats from Ravan API securely
+    if settings.RAVAN_AGNI_AI:
+        try:
+            url = f"https://api.ravan.ai/api/v1/campaigns/?limit=100"
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, headers={"X-Api-Key": settings.RAVAN_AGNI_AI, "Accept": "application/json"})
+                if resp.status_code == 200:
+                    r_data = resp.json().get("data", [])
+                    # Match Ravan campaigns with Local DB campaigns by ID
+                    r_campaigns = {rc["id"]: rc for rc in r_data}
+                    
+                    for c_id, c_dict in campaign_dict_map.items():
+                        if c_id in r_campaigns:
+                            rc = r_campaigns[c_id]
+                            # Inject real-time stats directly into frontend response
+                            c_dict["contactStats"] = rc.get("contactStats", {})
+                            c_dict["status"] = rc.get("status", c_dict.get("status", "Draft"))
+        except Exception as e:
+            print(f"Failed to fetch live campaign stats from Ravan API: {e}")
+            pass
+            
+    formatted_campaigns = list(campaign_dict_map.values())
+    return {"success": True, "data": formatted_campaigns}
 
 @router.post("/create")
 async def create_campaign(request: CreateCampaignRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_session)):
@@ -54,12 +80,15 @@ async def create_campaign(request: CreateCampaignRequest, current_user: User = D
             body = request.model_dump(exclude_none=True)
             
             # Backend Proxy: Map phoneNumberId dynamically
-            from app.models.domain import PurchasedPhoneNumber
-            phone_record = db.exec(select(PurchasedPhoneNumber).where(PurchasedPhoneNumber.phone_number == request.fromPhoneNumber)).first()
-            if phone_record and phone_record.id:
-                body["phoneNumberId"] = str(phone_record.id)
+            if current_user.ravan_phone_number_id:
+                body["phoneNumberId"] = current_user.ravan_phone_number_id
             else:
-                body["phoneNumberId"] = str(uuid.uuid4()) # Fallback to valid UUID format
+                from app.models.domain import PurchasedPhoneNumber
+                phone_record = db.exec(select(PurchasedPhoneNumber).where(PurchasedPhoneNumber.phone_number == request.fromPhoneNumber)).first()
+                if phone_record and phone_record.id:
+                    body["phoneNumberId"] = str(phone_record.id)
+                else:
+                    body["phoneNumberId"] = str(uuid.uuid4()) # Fallback to valid UUID format
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(url, json=body, headers=headers)
@@ -143,17 +172,43 @@ def run_campaign_calls(campaign_id: str):
                     pass
 
 
-@router.post("/start/{campaign_id}")
-def start_campaign(campaign_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_session)):
+@router.post("/{campaign_id}/start")
+async def start_campaign(campaign_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_session)):
     campaign = db.exec(select(Campaign).where(Campaign.id == campaign_id)).first()
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
         
+    # Hit Ravan API to natively start the campaign
+    if settings.RAVAN_AGNI_AI:
+        try:
+            url = f"https://api.ravan.ai/api/v1/campaigns/{campaign_id}/start"
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, headers={"X-Api-Key": settings.RAVAN_AGNI_AI})
+                if response.status_code != 200 and response.status_code != 201:
+                    print(f"Ravan Campaign Start Warning: {response.text}")
+                    error_detail = response.json().get("message", "Failed to start campaign on Ravan.ai") if response.headers.get("content-type") == "application/json" else response.text
+                    
+                    # If it's a 400 Bad Request (like missing phone numbers) or 404
+                    if response.status_code >= 400:
+                        raise HTTPException(status_code=400, detail=f"Ravan.ai Error: {error_detail}")
+                        
+                    # Try fallback patching to Active
+                    await client.patch(
+                        f"https://api.ravan.ai/api/v1/campaigns/{campaign_id}", 
+                        json={"status": "Active"}, 
+                        headers={"X-Api-Key": settings.RAVAN_AGNI_AI, "Content-Type": "application/json"}
+                    )
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"Failed to trigger Ravan campaign start: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+            
+    # Launch local fallback background task for hybrid local dialing
+    background_tasks.add_task(run_campaign_calls, campaign_id)
+    
     campaign.status = "Active"
     db.commit()
-    
-    # Launch background task so UI doesn't freeze tracking Exotel API latency
-    background_tasks.add_task(run_campaign_calls, campaign_id)
     
     return {"message": f"Campaign {campaign_id} started. Dispatching background calls securely..."}
 
@@ -194,20 +249,35 @@ async def exotel_webhook(request: Request):
     return {"status": "success"}
 
 @router.get("/{campaign_id}")
-def get_campaign_detail(campaign_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_session)):
+async def get_campaign_detail(campaign_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_session)):
     campaign = db.exec(select(Campaign).where(Campaign.id == campaign_id, Campaign.user_id == current_user.id)).first()
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
         
-    calls = db.exec(select(Call).where(Call.campaign_id == campaign_id)).all()
+    stats = {
+        "total": 0, "contacted": 0, "successful": 0, 
+        "failed": 0, "noAnswer": 0, "pending": 0, "inProgress": 0
+    }
     
-    total = len(calls)
-    contacted = sum(1 for c in calls if c.result_status in ["Answered", "Completed", "Busy", "No Answer", "Failed"])
-    successful = sum(1 for c in calls if c.result_status in ["Answered", "Completed"])
-    failed = sum(1 for c in calls if c.result_status in ["Failed"])
-    noAnswer = sum(1 for c in calls if c.result_status in ["No Answer", "Busy"])
-    pending = sum(1 for c in calls if c.result_status == "Pending")
-    inProgress = sum(1 for c in calls if c.result_status == "Calling")
+    if settings.RAVAN_AGNI_AI:
+        try:
+            url = f"https://api.ravan.ai/api/v1/campaigns/{campaign_id}"
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers={"X-Api-Key": settings.RAVAN_AGNI_AI})
+                if response.status_code == 200:
+                    r_data = response.json().get("data", {})
+                    stats = r_data.get("contactStats", stats)
+        except Exception:
+            pass
+    else:
+        calls = db.exec(select(Call).where(Call.campaign_id == campaign_id)).all()
+        stats["total"] = len(calls)
+        stats["contacted"] = sum(1 for c in calls if c.result_status in ["Answered", "Completed", "Busy", "No Answer", "Failed"])
+        stats["successful"] = sum(1 for c in calls if c.result_status in ["Answered", "Completed"])
+        stats["failed"] = sum(1 for c in calls if c.result_status in ["Failed"])
+        stats["noAnswer"] = sum(1 for c in calls if c.result_status in ["No Answer", "Busy"])
+        stats["pending"] = sum(1 for c in calls if c.result_status == "Pending")
+        stats["inProgress"] = sum(1 for c in calls if c.result_status == "Calling")
     
     return {
         "success": True, 
@@ -215,39 +285,55 @@ def get_campaign_detail(campaign_id: str, current_user: User = Depends(get_curre
             "id": campaign.id,
             "name": campaign.name,
             "status": campaign.status,
-            "contactStats": {
-                "total": total,
-                "contacted": contacted,
-                "successful": successful,
-                "failed": failed,
-                "noAnswer": noAnswer,
-                "pending": pending,
-                "inProgress": inProgress
-            }
+            "contactStats": stats
         }
     }
 
 @router.get("/{campaign_id}/contacts")
-def get_campaign_contacts(campaign_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_session)):
+async def get_campaign_contacts(campaign_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_session)):
     campaign = db.exec(select(Campaign).where(Campaign.id == campaign_id, Campaign.user_id == current_user.id)).first()
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
         
-    calls = db.exec(select(Call).where(Call.campaign_id == campaign_id)).all()
-    # Ideally join with Contact to get names, but just returning calls works for the UI stats
     results = []
-    for call in calls:
-        contact = db.exec(select(Contact).where(Contact.phone == call.contact_phone)).first()
+    
+    if settings.RAVAN_AGNI_AI:
+        try:
+            url = f"https://api.ravan.ai/api/v1/campaigns/{campaign_id}/contacts?limit=5000"
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers={"X-Api-Key": settings.RAVAN_AGNI_AI})
+                if response.status_code == 200:
+                    r_data = response.json().get("data", [])
+                    for rc in r_data:
+                        c_first = rc.get('firstName') or ''
+                        c_last = rc.get('lastName') or ''
+                        c_name = f"{c_first} {c_last}".strip() or rc.get('email', 'Unknown').split('@')[0]
+                        results.append({
+                            "id": rc.get("id"),
+                            "name": c_name,
+                            "phone": rc.get("phone", ""),
+                            "status": rc.get("status", "pending"),
+                            "duration": rc.get("duration", 0),
+                            "sentiment": rc.get("sentiment", ""),
+                            "summary": rc.get("summary", "")
+                        })
+                    return {"success": True, "data": results}
+        except Exception:
+            pass
+
+    # Fallback to local Contact table and Calls
+    contacts = db.exec(select(Contact).where(Contact.campaign_id == campaign_id)).all()
+    for contact in contacts:
+        call = db.exec(select(Call).where(Call.contact_phone == contact.phone, Call.campaign_id == campaign_id)).first()
         results.append({
-            "id": call.id,
-            "name": contact.name if contact else "Unknown",
-            "phone": call.contact_phone,
-            "status": call.result_status,
-            "duration": call.duration,
-            "sentiment": call.sentiment,
-            "summary": call.summary
+            "id": call.id if call else contact.id,
+            "name": contact.name,
+            "phone": contact.phone,
+            "status": call.result_status if call else "Pending",
+            "duration": call.duration if call else 0,
+            "sentiment": call.sentiment if call else "",
+            "summary": call.summary if call else ""
         })
-        
         
     return {"success": True, "data": results}
 

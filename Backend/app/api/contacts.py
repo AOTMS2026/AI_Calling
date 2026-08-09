@@ -255,6 +255,7 @@ async def get_contacts(
                         c_name = c_email.split('@')[0] if c_email else 'Unknown'
                         
                     formatted_contacts.append({
+                        "id": c_id,
                         "contact_id": c_id,
                         "phone": rc.get('phone') or '',
                         "name": c_name,
@@ -262,7 +263,7 @@ async def get_contacts(
                         "status": rc.get('status', 'pending'),
                         "agent_id": current_user.ravan_agent_id if current_user.role != 'admin' else agent_id,
                         "campaign_id": current_user.ravan_campaign_id if current_user.role != 'admin' else None,
-                        "tags": ", ".join(rc.get('tags') or []),
+                        "tags": rc.get('tags') or [],
                         "created_at": rc.get('createdAt') or ''
                     })
                 
@@ -279,7 +280,83 @@ async def get_contacts(
 
     # 2. Local Fallback (if Ravan API fails or is not configured)
     contacts = db.exec(select(Contact).order_by(Contact.phone.asc()).limit(limit)).all()
-    return {"success": True, "data": contacts}
+    # Format DB contacts to match expected frontend structure
+    formatted_db_contacts = []
+    for c in contacts:
+        c_dict = c.model_dump()
+        c_dict["tags"] = [t.strip() for t in c.tags.split(",")] if c.tags else []
+        formatted_db_contacts.append(c_dict)
+        
+    return {"success": True, "data": formatted_db_contacts}
+
+@router.post("/bulk-delete")
+async def bulk_delete_contacts(request: Request, db: Session = Depends(get_session)):
+    payload = await request.json()
+    ids = payload.get("ids", [])
+    if not ids:
+        return {"success": False, "message": "No IDs provided"}
+        
+    for cid in ids:
+        contact = db.exec(select(Contact).where(Contact.id == cid)).first()
+        if contact:
+            db.delete(contact)
+    
+    db.commit()
+    await invalidate_contact_caches()
+    return {"success": True, "message": f"Deleted {len(ids)} contacts"}
+
+@router.get("/{id}/detail")
+async def get_contact_detail(id: str, db: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+    contact = db.exec(select(Contact).where(Contact.id == id)).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+        
+    callStats = {"totalCalls": 0, "completedCount": 0, "noAnswerCount": 0, "failedCount": 0}
+    recentCalls = []
+    
+    if settings.RAVAN_AGNI_AI and contact.phone:
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"{RAVAN_CALLING_URL}/phone-history",
+                    params={"phone": contact.phone, "page_size": 5},
+                    headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
+                )
+                if resp.status_code == 200:
+                    r_data = resp.json()
+                    calls = r_data.get("calls", [])
+                    recentCalls = calls
+                    
+                    # Compute stats over fetched calls (in a real app, you'd fetch overall stats)
+                    callStats["totalCalls"] = r_data.get("total_count", len(calls))
+                    callStats["completedCount"] = sum(1 for c in calls if c.get("status") in ["completed", "success"])
+                    callStats["noAnswerCount"] = sum(1 for c in calls if c.get("status") == "no_answer")
+                    callStats["failedCount"] = sum(1 for c in calls if c.get("status") == "failed")
+        except Exception:
+            pass
+
+    return {
+        "success": True, 
+        "data": {
+            "contact": contact.model_dump(),
+            "callStats": callStats,
+            "recentCalls": recentCalls,
+            "campaigns": [],
+            "recentActivities": []
+        }
+    }
+
+@router.get("/{id}/activities")
+def get_contact_activities(id: str):
+    return {"success": True, "data": []}
+
+@router.get("/{id}/campaigns")
+def get_contact_campaigns(id: str):
+    return {"success": True, "data": []}
+
+@router.get("/{id}/notes")
+def get_contact_notes(id: str):
+    return {"success": True, "data": []}
 
 @router.post("/dial-single/{phone}")
 def manual_dial_contact(phone: str, db: Session = Depends(get_session)):

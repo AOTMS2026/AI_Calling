@@ -108,27 +108,97 @@ async def get_call_session_detail(session_id: str, current_user: User = Depends(
                 f"{RAVAN_CALLING_URL}/call-sessions-detail/{session_id}",
                 headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
             )
+            
+            if response.status_code == 404:
+                return {
+                    "success": True,
+                    "data": {
+                        "recording_url": "",
+                        "transcripts": [{"role": "bot", "content": "Call not found in Ravan.ai or still pending."}],
+                        "cost_total": 0.0,
+                        "credit_breakdown": {}
+                    }
+                }
+                
             response.raise_for_status()
-            return response.json()
+            r_data = response.json().get("data", {})
+            
+            # Map Ravan API response to AOTMS expected format
+            transcripts = []
+            raw_transcript = r_data.get("transcript") or r_data.get("transcripts") or []
+            
+            if isinstance(raw_transcript, list):
+                for item in raw_transcript:
+                    if "message" in item and isinstance(item["message"], dict):
+                        # Handle nested {message: {role, content}} format
+                        transcripts.append({
+                            "role": item["message"].get("role", "bot"),
+                            "content": item["message"].get("content", ""),
+                            "text": item["message"].get("content", "")
+                        })
+                    else:
+                        # Handle flat {role, content} format
+                        transcripts.append(item)
+            elif isinstance(raw_transcript, str):
+                # Try to parse string transcript if it's formatted like "User: Hello\nAI: Hi"
+                lines = raw_transcript.split('\n')
+                for line in lines:
+                    if ':' in line:
+                        role, text = line.split(':', 1)
+                        r = 'user' if 'user' in role.lower() or 'human' in role.lower() else 'bot'
+                        transcripts.append({"role": r, "content": text.strip(), "text": text.strip()})
+                    else:
+                        transcripts.append({"role": "bot", "content": line, "text": line})
+                        
+            return {
+                "success": True,
+                "data": {
+                    "recording_url": r_data.get("recording_url", r_data.get("recordingUrl", "")),
+                    "transcripts": transcripts,
+                    "cost_total": r_data.get("cost_total", r_data.get("cost", 0.0)),
+                    "credit_breakdown": r_data.get("credit_breakdown", {})
+                }
+            }
         except httpx.HTTPStatusError as e:
             raise HTTPException(status_code=e.response.status_code, detail=f"Ravan API Error: {e.response.text}")
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/phone-history")
-async def get_phone_history(current_user: User = Depends(get_current_user)):
+async def get_phone_history(request: Request, current_user: User = Depends(get_current_user)):
     if not settings.RAVAN_AGNI_AI:
         return {"data": []}
         
     async with httpx.AsyncClient() as client:
         try:
+            # Forward all query parameters like phone, page, etc.
             response = await client.get(
                 f"{RAVAN_CALLING_URL}/phone-history",
+                params=dict(request.query_params),
                 headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
             )
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            
+            # Map transcripts for UI compatibility
+            if "calls" in data:
+                for call in data["calls"]:
+                    if "transcripts" in call and isinstance(call["transcripts"], list):
+                        flat_transcripts = []
+                        for item in call["transcripts"]:
+                            if "message" in item and isinstance(item["message"], dict):
+                                flat_transcripts.append({
+                                    "role": item["message"].get("role", "bot"),
+                                    "content": item["message"].get("content", ""),
+                                    "text": item["message"].get("content", "")
+                                })
+                            else:
+                                flat_transcripts.append(item)
+                        call["transcripts"] = flat_transcripts
+                        
+            return data
         except Exception as e:
+            print(f"Error fetching phone-history: {e}")
             return {"data": []}
 
 @router.get("/audio-stream")
@@ -138,7 +208,7 @@ async def get_audio_stream(url: str):
         raise HTTPException(status_code=500, detail="RAVAN_AGNI_AI key not configured.")
         
     async def stream_generator():
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
             try:
                 async with client.stream("GET", url, headers={"X-Api-Key": settings.RAVAN_AGNI_AI}) as response:
                     response.raise_for_status()

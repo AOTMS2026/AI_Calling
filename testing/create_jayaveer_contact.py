@@ -13,7 +13,7 @@ def run():
         
         # Wait for login form
         page.wait_for_selector('input[type="email"]', timeout=10000)
-        page.locator('input[type="email"]').fill("ramanadhamjayaveer@gmail.com")
+        page.locator('input[type="email"]').fill("yantirababu@gmail.com")
         page.locator('input[type="password"]').fill("Jayaveer!@#1837")
         page.click('button[type="submit"]')
         
@@ -35,12 +35,12 @@ def run():
         # 4. Fill details
         print("Filling out form for Jayaveer...")
         # Full Name
-        page.locator('input[placeholder="John Doe"]').fill("nani")
+        page.locator('input[placeholder="John Doe"]').fill("Pavan kalyan")
         # Phone Number
-        page.locator('input[placeholder="+914157774444"]').fill("+919493055461")
+        page.locator('input[placeholder="+914157774444"]').fill("+919550488347")
         
         # Email Address
-        page.locator('input[placeholder="alex@example.com"]').fill("yantirababu@gmail.com")
+        page.locator('input[placeholder="alex@example.com"]').fill("nani@gmail.com")
         
         # Target Campaign
         # Wait a moment for campaigns to load in the dropdown

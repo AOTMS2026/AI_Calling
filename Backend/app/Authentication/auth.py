@@ -170,7 +170,9 @@ async def login(request: LoginRequest, db: Session = Depends(get_session)):
             detail=f"Account locked due to too many failed login attempts. Please try again in {time_left + 1} minutes."
         )
 
-    user = db.exec(select(User).where(User.email == request.email)).first()
+    # Case-insensitive email search
+    user = db.exec(select(User)).all()
+    user = next((u for u in user if u.email.lower() == email_key), None)
     
     # 2. Check credentials
     if not user or not verify_password(request.password, user.hashed_password):
