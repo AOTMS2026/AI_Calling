@@ -41,8 +41,8 @@ async def create_agent(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_session)
 ):
-    import uuid
-    new_agent_id = str(uuid.uuid4())
+    import random
+    new_agent_id = str(random.randint(100000, 999999))
     
     if current_user.role != 'admin' and not current_user.ravan_agent_id:
         current_user.ravan_agent_id = new_agent_id
