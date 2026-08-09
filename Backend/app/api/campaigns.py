@@ -53,6 +53,14 @@ async def create_campaign(request: CreateCampaignRequest, current_user: User = D
             }
             body = request.model_dump(exclude_none=True)
             
+            # Backend Proxy: Map phoneNumberId dynamically
+            from app.models.domain import PurchasedPhoneNumber
+            phone_record = db.exec(select(PurchasedPhoneNumber).where(PurchasedPhoneNumber.phone_number == request.fromPhoneNumber)).first()
+            if phone_record and phone_record.id:
+                body["phoneNumberId"] = str(phone_record.id)
+            else:
+                body["phoneNumberId"] = str(uuid.uuid4()) # Fallback to valid UUID format
+            
             async with httpx.AsyncClient() as client:
                 response = await client.post(url, json=body, headers=headers)
                 if response.status_code == 200 or response.status_code == 201:
