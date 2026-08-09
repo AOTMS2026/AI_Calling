@@ -59,7 +59,11 @@ async def create_campaign(request: CreateCampaignRequest, current_user: User = D
                     data = response.json().get("data", {})
                     if data.get("id"):
                         new_campaign_id = data.get("id")
-        except Exception as e:
+                else:
+                    print(f"Ravan API Campaign Reject ({response.status_code}): {response.text}")
+                    # Force raise so we can see the exact validation error in the network panel or logs
+                    raise HTTPException(status_code=response.status_code, detail=f"Ravan API Error: {response.text}")
+        except httpx.RequestError as e:
             print(f"Failed to sync campaign with Ravan API: {e}")
             pass
             
