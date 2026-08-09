@@ -217,6 +217,7 @@ async def get_contacts(
             if current_user.role != 'admin' and current_user.ravan_campaign_id:
                 # Fetch strictly for their assigned campaign
                 url = f"https://api.ravan.ai/api/v1/campaigns/{current_user.ravan_campaign_id}/contacts?limit={limit}"
+                print(f"⚡ PROXY: User {current_user.email} fetching sandbox campaign contacts from Ravan.ai ({url})")
             else:
                 # Fetch globally (or filtered by frontend provided agent_id via query params natively if supported)
                 # But Ravan API /contacts doesn't officially support agentId filter in the URL based on previous tests, 
@@ -224,6 +225,7 @@ async def get_contacts(
                 url = f"https://api.ravan.ai/api/v1/contacts/?limit={limit}"
                 if agent_id:
                     url += f"&agentId={agent_id}"
+                print(f"⚡ PROXY: Admin fetching global contacts from Ravan.ai ({url})")
 
             async with httpx.AsyncClient() as client:
                 r_resp = await client.get(
@@ -233,6 +235,7 @@ async def get_contacts(
                 
             if r_resp.status_code == 200:
                 ravan_data = r_resp.json().get("data", [])
+                print(f"✅ SUCCESSFULLY FETCHED {len(ravan_data)} CONTACTS FROM RAVAN.AI!")
                 
                 # Transform Ravan payload format back into our Local Format so the Frontend Table doesn't break
                 formatted_contacts = []

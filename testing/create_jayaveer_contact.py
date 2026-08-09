@@ -35,12 +35,12 @@ def run():
         # 4. Fill details
         print("Filling out form for Jayaveer...")
         # Full Name
-        page.locator('input[placeholder="John Doe"]').fill("NagNani")
+        page.locator('input[placeholder="John Doe"]').fill("nani")
         # Phone Number
-        page.locator('input[placeholder="+91415778954"]').fill("+919493055461")
+        page.locator('input[placeholder="+914157774444"]').fill("+919493055461")
         
         # Email Address
-        page.locator('input[placeholder="alex@example.com"]').fill("jayaveer@gmail.com")
+        page.locator('input[placeholder="alex@example.com"]').fill("yantirababu@gmail.com")
         
         # Target Campaign
         # Wait a moment for campaigns to load in the dropdown
