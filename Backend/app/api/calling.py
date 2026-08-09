@@ -5,6 +5,8 @@ from typing import Optional
 from app.core.config import settings
 from app.api.dependencies import get_current_user
 from app.models.domain import User
+from sqlmodel import Session
+from app.database.connection import get_session
 
 router = APIRouter(prefix="/calling", tags=["calling"])
 
@@ -48,10 +50,27 @@ async def finalize_session(session_id: str, current_user: User = Depends(get_cur
             raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/call-sessions")
-async def get_call_sessions(page_size: int = 50, current_user: User = Depends(get_current_user)):
+async def get_call_sessions(
+    page_size: int = 50, 
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
     if not settings.RAVAN_AGNI_AI:
         return {"data": []}
         
+    # Get user's assigned agents
+    agent_uuids = set()
+    if current_user.role != 'admin':
+        from sqlmodel import select
+        from app.models.domain import Assign_Agents
+        assigned_records = db.exec(select(Assign_Agents.agent_id).where(Assign_Agents.user_id == current_user.id)).all()
+        agent_uuids = set(assigned_records)
+        if current_user.ravan_agent_id:
+            agent_uuids.add(current_user.ravan_agent_id)
+            
+        if not agent_uuids:
+            return {"data": []}
+            
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(
@@ -59,8 +78,23 @@ async def get_call_sessions(page_size: int = 50, current_user: User = Depends(ge
                 headers={"X-Api-Key": settings.RAVAN_AGNI_AI}
             )
             response.raise_for_status()
-            return response.json()
+            res_json = response.json()
+            
+            if current_user.role != 'admin':
+                # Filter call sessions by agent_id
+                data_obj = res_json.get("data", {})
+                if isinstance(data_obj, dict):
+                    call_sessions = data_obj.get("callSessions", [])
+                    filtered = [c for c in call_sessions if c.get("agentId") in agent_uuids or c.get("agent_id") in agent_uuids]
+                    res_json["data"]["callSessions"] = filtered
+                    res_json["data"]["totalCount"] = len(filtered)
+                elif isinstance(data_obj, list):
+                    filtered = [c for c in data_obj if c.get("agentId") in agent_uuids or c.get("agent_id") in agent_uuids]
+                    res_json["data"] = filtered
+                    
+            return res_json
         except Exception as e:
+            print(f"Error fetching call sessions: {e}")
             return {"data": []}
 
 @router.get("/call-sessions-detail/{session_id}")
