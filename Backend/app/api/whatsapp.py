@@ -29,7 +29,7 @@ def serialize_models(models: List[Any]) -> List[dict]:
             serialized.append(json.loads(m.json()))
     return serialized
 
-async def invalidate_whatsapp_caches(user_id: int):
+async def invalidate_whatsapp_caches(user_id: str):
     try:
         await delete_cache(generate_cache_key("whatsapp_campaigns", user_id=user_id))
         await delete_cache(generate_cache_key("whatsapp_templates", user_id=user_id))
@@ -69,7 +69,7 @@ def validate_phone(phone: str) -> bool:
     return len(cleaned) >= 10
 
 # Mock initial template seeding
-def seed_templates_if_empty(session: Session, user_id: int):
+def seed_templates_if_empty(session: Session, user_id: str):
     existing = session.exec(select(WhatsAppTemplate).where(WhatsAppTemplate.user_id == user_id)).all()
     if not existing:
         templates = [
@@ -100,7 +100,7 @@ def seed_templates_if_empty(session: Session, user_id: int):
         session.commit()
 
 # Mock initial contact groups seeding
-def seed_groups_if_empty(session: Session, user_id: int):
+def seed_groups_if_empty(session: Session, user_id: str):
     existing = session.exec(select(WhatsAppGroup).where(WhatsAppGroup.user_id == user_id)).all()
     if not existing:
         groups = [
@@ -114,7 +114,7 @@ def seed_groups_if_empty(session: Session, user_id: int):
         session.commit()
 
 # Background sender loop simulation (Handles duplicate protection, rate limits & billing costs)
-def process_messages_queue(campaign_id: int, user_id: int):
+def process_messages_queue(campaign_id: str, user_id: str):
     # Retrieve DB session locally
     from app.database.connection import SessionLocal
     with SessionLocal() as session:
@@ -247,7 +247,7 @@ async def create_campaign(
 
 
 @router.post("/campaigns/{id}/pause")
-async def pause_campaign(id: int, session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+async def pause_campaign(id: str, session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
     campaign = session.exec(
         select(WhatsAppCampaign)
         .where(WhatsAppCampaign.id == id)
@@ -263,7 +263,7 @@ async def pause_campaign(id: int, session: Session = Depends(get_session), curre
 
 @router.post("/campaigns/{id}/resume")
 async def resume_campaign(
-    id: int, 
+    id: str, 
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session), 
     current_user: User = Depends(get_current_user)
@@ -283,7 +283,7 @@ async def resume_campaign(
     return {"message": "Campaign resumed successfully."}
 
 @router.post("/campaigns/{id}/cancel")
-async def cancel_campaign(id: int, session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+async def cancel_campaign(id: str, session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
     campaign = session.exec(
         select(WhatsAppCampaign)
         .where(WhatsAppCampaign.id == id)
@@ -299,7 +299,7 @@ async def cancel_campaign(id: int, session: Session = Depends(get_session), curr
 
 @router.post("/campaigns/{id}/retry-failed")
 async def retry_failed_campaign_messages(
-    id: int,
+    id: str,
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)

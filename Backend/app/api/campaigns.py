@@ -27,7 +27,7 @@ def create_campaign(request: CampaignCreateRequest, db: Session = Depends(get_se
     db.refresh(new_campaign)
     return new_campaign
 
-def run_campaign_calls(campaign_id: int):
+def run_campaign_calls(campaign_id: str):
     """Background task to dial pending contacts. Disconnected offline mode."""
     with Session(engine) as db:
         called_contacts_subq = select(Call.contact_phone).where(Call.campaign_id == campaign_id)
@@ -44,7 +44,7 @@ def run_campaign_calls(campaign_id: int):
 
 
 @router.post("/start/{campaign_id}")
-def start_campaign(campaign_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_session)):
+def start_campaign(campaign_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_session)):
     campaign = db.exec(select(Campaign).where(Campaign.id == campaign_id)).first()
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")

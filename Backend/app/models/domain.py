@@ -1,6 +1,7 @@
 from sqlmodel import SQLModel, Field
 from typing import Optional
 from datetime import datetime
+import uuid
 
 class UserBase(SQLModel):
     name: str
@@ -20,12 +21,12 @@ class UserCreate(UserBase):
     confirm_password: str
 
 class User(UserBase, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     hashed_password: str
 
 class OTP(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="user.id")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    user_id: str = Field(foreign_key="user.id")
     code: str
     expires_at: datetime
     is_used: bool = Field(default=False)
@@ -47,18 +48,18 @@ class Contact(SQLModel, table=True):
     tags: Optional[str] = None
 
 class Campaign(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="user.id")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    user_id: str = Field(foreign_key="user.id")
     name: str
     prompt: Optional[str] = None
     voice: Optional[str] = None
     status: str = Field(default="Draft") # Draft, Active, Completed
 
 class Call(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     vendor_call_sid: Optional[str] = Field(default=None, index=True)
     contact_phone: str = Field(foreign_key="contact.phone")
-    campaign_id: Optional[int] = Field(default=None, foreign_key="campaign.id")
+    campaign_id: Optional[str] = Field(default=None, foreign_key="campaign.id")
     duration: Optional[int] = None
     transcript: Optional[str] = None
     result_status: str = Field(default="Pending") # Pending, Calling, Answered, Busy, No Answer, Failed, Completed
@@ -71,7 +72,7 @@ class Call(SQLModel, table=True):
     recording_url: Optional[str] = None
 
 class AppointmentBooking(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     agent_id: Optional[str] = None
     org_id: Optional[str] = None
     name: str = Field(index=True)
@@ -86,7 +87,7 @@ class AppointmentBooking(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 class CalcomConfiguration(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     agent_id: str = Field(index=True)
     api_key: str
     event_id: str
@@ -95,7 +96,7 @@ class CalcomConfiguration(SQLModel, table=True):
 
 
 class InboundCampaign(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     phone_number: str = Field(index=True)
     agent_id: str
     agent_name: str
@@ -110,8 +111,8 @@ class InboundCampaign(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 class PurchasedPhoneNumber(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="user.id")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    user_id: str = Field(foreign_key="user.id")
     platform_id: Optional[str] = None
     phone_number: str = Field(index=True, unique=True)
     price: float = Field(default=0.0)
@@ -121,7 +122,7 @@ class PurchasedPhoneNumber(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 class DashboardMetrics(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     agent_id: str = Field(index=True)
     total_duration_sec: int = Field(default=0)
     total_cost: float = Field(default=0.0)
@@ -134,7 +135,7 @@ class DashboardMetrics(SQLModel, table=True):
 
 class CallRecord(SQLModel, table=True):
     """Persists every individual call from Ravan.ai with cost tracking."""
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     call_id: str = Field(index=True, unique=True)  # Ravan session UUID (upsert key)
     agent_id: Optional[str] = None
     agent_name: Optional[str] = None
@@ -160,17 +161,15 @@ class CallRecord(SQLModel, table=True):
 
 
 class Assign_Agents(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    agent_id: str = Field(index=True)
-    user_id: int = Field(foreign_key="user.id")
+    agent_id: str = Field(primary_key=True)
+    user_id: str = Field(foreign_key="user.id", primary_key=True)
     customer_name: Optional[str] = None
     customer_email: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 class Assign_Campaigns(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    campaign_id: str = Field(index=True)
+    campaign_id: str = Field(primary_key=True)
+    user_id: str = Field(foreign_key="user.id", primary_key=True)
     agent_id: Optional[str] = None
-    user_id: int = Field(foreign_key="user.id")
     campaign_name: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)

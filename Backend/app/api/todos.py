@@ -20,7 +20,7 @@ def serialize_models(models: List[Any]) -> List[dict]:
             serialized.append(json.loads(m.json()))
     return serialized
 
-async def invalidate_todo_caches(user_id: int):
+async def invalidate_todo_caches(user_id: str):
     try:
         await delete_cache(f"todos_{user_id}")
         await delete_cache(f"todos_activities_{user_id}")
@@ -163,7 +163,7 @@ async def create_todo(
 
 @router.patch("/{todo_id}")
 async def update_todo(
-    todo_id: int,
+    todo_id: str,
     payload: TodoUpdate,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
@@ -209,7 +209,7 @@ async def update_todo(
 
 @router.delete("/{todo_id}")
 async def delete_todo(
-    todo_id: int,
+    todo_id: str,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
