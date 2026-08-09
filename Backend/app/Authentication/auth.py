@@ -255,7 +255,7 @@ async def get_all_users(db: Session = Depends(get_session)):
     return safe_users
 
 @router.patch("/users/{user_id}")
-async def update_user_authorization(user_id: int, request: PatchUserRoleRequest, db: Session = Depends(get_session)):
+async def update_user_authorization(user_id: str, request: PatchUserRoleRequest, db: Session = Depends(get_session)):
     user = db.exec(select(User).where(User.id == user_id)).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")

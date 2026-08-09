@@ -14,11 +14,29 @@ export function PhoneNumbers() {
     const fetchNumbers = async () => {
         setLoading(true);
         try {
-            const response = await apiClient.get('/phone-numbers/available-numbers/IN?region=IN');
-            setNumbers(response.data.data || []);
+            const staticNumbers = [
+                "+918031149452", "+918031452831", "+918031149307", "+918031452444", 
+                "+918031452595", "+918031452586", "+918031451750", "+918031453006", 
+                "+918031453932", "+918031453233", "+918031149306", "+918031452835", 
+                "+918031149457", "+918031452448", "+918031149502", "+918031452580", 
+                "+918031452634", "+918031149364", "+918031149483", "+918031452662"
+            ].map(num => ({
+                phone_number: num,
+                region: "India",
+                currency: "INR",
+                price: 413.0,
+                monthly_fee: 413.0,
+                per_minute_price_inbound: 0.80,
+                per_minute_price_outbound: 0.80,
+                capabilities: ["voice", "sms"]
+            }));
+            
+            setTimeout(() => {
+                setNumbers(staticNumbers);
+                setLoading(false);
+            }, 500);
         } catch (error) {
             toast.error("Failed to fetch Indian phone numbers.");
-        } finally {
             setLoading(false);
         }
     };

@@ -23,7 +23,4 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     if user is None:
         raise HTTPException(status_code=401, detail="User not found")
         
-    if user.role != 'admin' and (user.allocated_credits is None or user.allocated_credits <= 0):
-        raise HTTPException(status_code=403, detail="Account locked: You have exhausted your allocated credits. Please contact your administrator.")
-        
     return user

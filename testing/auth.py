@@ -21,7 +21,7 @@ except ImportError:
     sync_playwright = None
 
 # Constants & Configurations
-DEFAULT_TEST_EMAIL = "ramanadhamjayaveer@gmail.com"
+DEFAULT_TEST_EMAIL = "ramanadhamjayaveer@mictech.edu.in"
 DEFAULT_TEST_PASSWORD = "Jayaveer!@#1837"
 DEFAULT_BASE_URL = "https://www.aotms.com"
 
